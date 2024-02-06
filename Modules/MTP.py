@@ -43,6 +43,15 @@ import sscha.Utilities as Utilities
 import cellconstructor.symmetries
 from sscha.aiida_ensemble import AiiDAEnsemble
 
+import itertools
+from scipy.spatial.distance import cdist
+
+# Try to load the parallel library if any
+try:
+    from mpi4py import MPI
+    __MPI__ = True
+except:
+    __MPI__ = False
 
 
 class Ensemble_MTP(Ensemble):
@@ -64,7 +73,8 @@ class Ensemble_MTP(Ensemble):
                  include_stress = True,
                  retrain = True, 
                  np_ab_initio = 1,
-                 np_mlp_train = 1,                 
+                 np_mlp_train = 1,  
+                 min_distances = None,               
                  **kwargs):
 
         self.specorder = specorder 
@@ -84,8 +94,81 @@ class Ensemble_MTP(Ensemble):
         self.retrain = retrain # IMPORTANT TAG!!! if we wish to retrain the MTP on structures produced with extrapolation control
         self.np_ab_initio = np_ab_initio
         self.np_mlp_train = np_mlp_train
+        self.min_distances = min_distances
         # super().__init__(dyn0, T0, supercell, **kwargs)
+
+        # Setup any other keyword given in input (raising the error if not already defined)
+        for key in kwargs:
+            self.__setattr__(key, kwargs[key])
+
         super().__init__(dyn0, T0, supercell)
+
+
+    def generate(self, N, evenodd = True, project_on_modes = None, sobol = False, sobol_scramble = False, sobol_scatter = 0.0):
+        """
+        GENERATE THE ENSEMBLE
+        =====================
+
+        This subroutine generates the ensemble from dyn0 and T0 setted when this
+        class is created.
+        You still need to generate the forces for the configurations.
+
+        Parameters
+        ----------
+            N : int
+                The number of random configurations to be extracted
+            evenodd : bool, optional
+                If true for each configuration also the opposite is extracted
+            project_on_modes : ndarray(size=(3*nat_sc, nproj)), optional
+                If different from None the displacements are projected on the
+                given modes.
+            sobol : bool, optional (Default = False)
+                 Defines if the calculation uses random Gaussian generator or Sobol Gaussian generator.
+            sobol_scramble : bool, optional (Default = False)
+                Set the optional scrambling of the generated numbers taken from the Sobol sequence.
+            sobol_scatter : real (0.0 to 1) (Deafault = 0.0)
+                Set the scatter parameter to displace the Sobol positions randommly.
+
+        """
+
+        if evenodd and (N % 2 != 0):
+            raise ValueError("Error, evenodd allowed only with an even number of random structures")
+
+        self.N = N
+        Nat_sc = np.prod(self.supercell) * self.dyn_0.structure.N_atoms
+        self.structures = []
+        #super_dyn = self.dyn_0.GenerateSupercellDyn(self.supercell)
+        super_struct = self.dyn_0.structure.generate_supercell(self.dyn_0.GetSupercell())
+
+        structures = []
+        if evenodd:
+            structs = self.dyn_0.ExtractRandomStructures(N // 2, self.T0, project_on_vectors = project_on_modes, lock_low_w = self.ignore_small_w, sobol = sobol, sobol_scramble = sobol_scramble, sobol_scatter = sobol_scatter)  # normal Sobol generator****Diegom_test****
+
+
+
+            for i, s in enumerate(structs):
+                structures.append(s)
+                new_s = s.copy()
+                # Get the opposite displacement structure
+                new_s.coords = super_struct.coords - new_s.get_displacement(super_struct)
+                structures.append(new_s)
+        else:
+            structures = self.dyn_0.ExtractRandomStructures(N, self.T0, project_on_vectors = project_on_modes, lock_low_w = self.ignore_small_w, sobol = sobol, sobol_scramble = sobol_scramble, sobol_scatter = sobol_scatter)  # normal Sobol generator****Diegom_test****
+
+        # filter structures by min_distance constraints if they are specified
+        if self.min_distances != None:
+            constrained_structures = []
+            for structure in structures:
+                if are_ion_distances_good(structure, self.min_distances):
+                    constrained_structures.append(structure)
+        else:
+            constrained_structures = structures
+
+        # Enforce all the processors to share the same structures
+        constrained_structures = CC.Settings.broadcast(constrained_structures)
+
+        self.init_from_structures(constrained_structures)
+
 
 
     def compute_ensemble(self, calculator, compute_stress = True, stress_numerical = False,
@@ -136,6 +219,10 @@ class Ensemble_MTP(Ensemble):
             computing_ensemble = self.get_noncomputed()
             self.remove_noncomputed()
 
+        # Remove the structures that do not satisfy minDist constraints 
+
+
+        # Computing energy and forces for structures in the ensemble
         if is_cluster:
             print("BEFORE COMPUTING:", self.all_properties)
             cluster.compute_ensemble(computing_ensemble, calculator, compute_stress)
@@ -152,6 +239,17 @@ class Ensemble_MTP(Ensemble):
 
         print('ENSEMBLE ALL PROPERTIES:', self.all_properties)
 
+    def get_mindist_constrained(self):
+        """
+        Get another ensemble with only the configurations that satisfy the mindist constraints.
+        This may be used to avoid the erroneus calculations with overlapping PAW spheres (in the ab initio case) 
+        or within untrained domain (in the case of actively learned MTPs)
+        """
+
+
+        non_mask = ~self.force_computed
+
+        return self.split(non_mask)
 
     def get_energy_forces(self, ase_calculator, compute_stress = True, stress_numerical = False, skip_computed = False, verbose = False):
         """
@@ -533,16 +631,16 @@ Error, the specified location to save the ensemble:
                     train_mtp_on_cfg(self.specorder,self.mlip_run_command, self.pot_name, 
                         self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
                         self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps, pop, self.np_ab_initio)
-                elif not self.train_on_every_ensemble:
-                    if pop == start_pop:
-                        ensemble_structures = self.minim.ensemble.structures
-                        ase_structures_list_to_cfg(ensemble_structures,'preselected.cfg')
-                        os.system('touch set.cfg')
-                        train_mtp_on_cfg(self.specorder,self.mlip_run_command, self.pot_name, 
-                            self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
-                            self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps,pop, self.np_ab_initio)
-                    else:
-                        pass
+                # elif not self.train_on_every_ensemble:
+                #     if pop == start_pop:
+                #         ensemble_structures = self.minim.ensemble.structures
+                #         ase_structures_list_to_cfg(ensemble_structures,'preselected.cfg')
+                #         os.system('touch set.cfg')
+                #         train_mtp_on_cfg(self.specorder,self.mlip_run_command, self.pot_name, 
+                #             self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
+                #             self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps,pop, self.np_ab_initio)
+                #     else:
+                #         pass
 
                 # Compute energies and forces
                 self.minim.ensemble.compute_ensemble(self.calc, get_stress,
@@ -782,16 +880,16 @@ Error, the specified location to save the ensemble:
                     train_mtp_on_cfg(self.specorder,self.mlip_run_command, self.pot_name, 
                         self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
                         self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps,pop, self.np_ab_initio)
-                elif not self.train_on_every_ensemble:
-                    if pop == start_pop:
-                        ensemble_structures = self.minim.ensemble.structures
-                        ase_structures_list_to_cfg(ensemble_structures,'preselected.cfg')
-                        os.system('touch set.cfg')
-                        train_mtp_on_cfg(self.specorder, self.mlip_run_command, self.pot_name, 
-                            self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
-                            self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps,pop, self.np_ab_initio)
-                    else:
-                        pass
+                # elif not self.train_on_every_ensemble:
+                #     if pop == start_pop:
+                #         ensemble_structures = self.minim.ensemble.structures
+                #         ase_structures_list_to_cfg(ensemble_structures,'preselected.cfg')
+                #         os.system('touch set.cfg')
+                #         train_mtp_on_cfg(self.specorder, self.mlip_run_command, self.pot_name, 
+                #             self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
+                #             self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps,pop, self.np_ab_initio)
+                #     else:
+                #         pass
 
                 # Compute energies and forces
                 self.minim.ensemble.compute_ensemble(self.calc, True, stress_numerical,
@@ -1015,13 +1113,16 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
     except:
         pass
     # os.system('pwd')
+
+    # selection of structures with MaxVol algorithm
     os.system(cmd_select_add)
-    # n_cfg_cmd = 'ls preselected.cfg.* | wc -l'
+
+    # gaining the number of selected structures
     n_cfg_cmd = 'grep "BEGIN" selected.cfg | wc -l'
-    # n_cfg_cmd = 'grep "BEGIN" preselected.cfg | wc -l'
     n_cfg = int(os.popen(n_cfg_cmd).read().split()[0])
     print(f"There are {n_cfg} configurations that need to be added to the training set") 
 
+    # spliting the file with selected structures on n_cfg files 
     try:
         split_cfg('selected.cfg')
     except FileNotFoundError:
@@ -1029,6 +1130,7 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
         return
 
     if n_cfg > 0:
+        # ab initio calculation of energies, forces, and stresses for selected structures 
         for i in range(n_cfg):
             print(f"Calculating ab initio energies and forces for configuration selected.cfg.{i}")
             # cmd_convert  = f'{mlip_run_command} {path_to_mlip} convert --output_format=poscar sampled.cfg.{i} {i}.POSCAR' 
@@ -1047,6 +1149,8 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
             print(f'KPOINTS: {k_points}')
 
             ### Seting up ab initio calculations ###
+            is_converged = False
+
             if ab_initio_calculator == "QE":
                 
                 ab_initio_calc = Espresso(pseudopotentials = ab_initio_pseudos,
@@ -1072,21 +1176,29 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
 
                 if 'PREC' in ab_initio_parameters.keys():
                     prec = ab_initio_parameters['PREC']
+                elif 'prec' in ab_initio_parameters.keys():
+                    prec = ab_initio_parameters['prec']  
                 else: 
                     prec = 'Accurate' # Accurate setting for better forces accuracy
 
                 if 'ENCUT' in ab_initio_parameters.keys():
                     encut = ab_initio_parameters['ENCUT']
+                elif 'encut' in ab_initio_parameters.keys():
+                    encut = ab_initio_parameters['encut']                    
                 else:
                     encut = None
 
                 if 'EDIFF' in ab_initio_parameters.keys():
                     ediff = ab_initio_parameters['EDIFF']
+                elif 'ediff' in ab_initio_parameters.keys():
+                    ediff = ab_initio_parameters['ediff']
                 else:
                     ediff = 1e-4
 
                 if 'NBANDS' in ab_initio_parameters.keys():
                     nbands = ab_initio_parameters['NBANDS']
+                elif 'nbands' in ab_initio_parameters.keys():
+                    nbands = ab_initio_parameters['nbands']
                 else:
                     nbands = None
 
@@ -1097,59 +1209,91 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
 
                 if 'ISMEAR' in ab_initio_parameters.keys():
                     ismear = ab_initio_parameters['ISMEAR']
+                elif 'ismear' in ab_initio_parameters.keys():
+                    ismear = ab_initio_parameters['ismear']
                 else:
                     ismear = 1
 
                 if 'SIGMA' in ab_initio_parameters.keys():
                     sigma = ab_initio_parameters['SIGMA']
+                elif 'sigma' in ab_initio_parameters.keys():
+                    sigma = ab_initio_parameters['sigma']
                 else:
                     sigma = 0.05
 
                 if 'NELM' in ab_initio_parameters.keys():
                     nelm = ab_initio_parameters['NELM']
+                elif 'nelm' in ab_initio_parameters.keys():
+                    nelm = ab_initio_parameters['nelm']
                 else:
                     nelm = 500
 
                 if 'ISTART' in ab_initio_parameters.keys():
                     istart = ab_initio_parameters['ISTART']
+                elif 'istart' in ab_initio_parameters.keys():
+                    istart = ab_initio_parameters['istart']
                 else:
                     istart = 0
 
                 if 'LCHARG' in ab_initio_parameters.keys():
                     lcharg = ab_initio_parameters['LCHARG']
+                elif 'lcharg' in ab_initio_parameters.keys():
+                    lcharg = ab_initio_parameters['lcharg']
                 else:
                     lcharg = 'FALSE'
 
                 if 'LWAVE' in ab_initio_parameters.keys():
                     lwave = ab_initio_parameters['LWAVE']
+                elif 'lwave' in ab_initio_parameters.keys():
+                    lwave = ab_initio_parameters['lwave']
                 else:
                     lwave = 'FALSE'
 
                 if 'LREAL' in ab_initio_parameters.keys():
                     lreal = ab_initio_parameters['LREAL']
+                elif 'lreal' in ab_initio_parameters.keys():
+                    lreal = ab_initio_parameters['lreal']                    
                 else:
                     lreal = 'Auto'
 
+                if 'ISPIN' in ab_initio_parameters.keys():
+                    ispin = ab_initio_parameters['ISPIN']
+                elif 'ispin' in ab_initio_parameters.keys():
+                    ispin = ab_initio_parameters['ispin']
+                else:
+                    ispin = 1
+
+                NATOMS = ab_initio_ase_atoms.get_number_of_atoms()
+                if 'MAGMOM' in ab_initio_parameters.keys():
+                    magmom = ab_initio_parameters['MAGMOM']
+                elif 'magmom' in ab_initio_parameters.keys():
+                    magmom = ab_initio_parameters['magmom']
+                else:
+                    magmom = [1.0 for i in range(NATOMS)]
+
+
                 ab_initio_calc = Vasp(directory = ab_initio_dir,
-                                        label = 'vasp',
-                                        command = ab_initio_run_command,
-                                        setups = setups,
-                                        txt = 'vasp.out',
-                                        pp = "PBE",
-                                        kpts = k_points,
-                                        prec = prec,
-                                        encut = encut,
-                                        ediff = ediff,
-                                        nbands = nbands,
-                                        algo = algo,
-                                        ismear = ismear,
-                                        sigma = sigma,
-                                        nelm = nelm,
-                                        istart = istart,
-                                        lcharg = lcharg,
-                                        lwave = lwave,
-                                        lreal = lreal
-                                        )
+                                      label = 'vasp',
+                                      command = ab_initio_run_command,
+                                      setups = setups,
+                                      txt = 'vasp.out',
+                                      pp = "PBE",
+                                      kpts = k_points,
+                                      prec = prec,
+                                      encut = encut,
+                                      ediff = ediff,
+                                      nbands = nbands,
+                                      algo = algo,
+                                      ismear = ismear,
+                                      sigma = sigma,
+                                      nelm = nelm,
+                                      istart = istart,
+                                      lcharg = lcharg,
+                                      lwave = lwave,
+                                      lreal = lreal,
+                                      ispin = ispin,
+                                      magmom = magmom,
+                                      )
                 # ab_initio_calc.set_directory(ab_initio_dir)
                 in_ext  = "POSCAR"
                 out_ext = "OUTCAR"                  
@@ -1168,17 +1312,40 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
                     cc_struct = CC.Structure.Structure()
                     cc_struct.generate_from_ase_atoms(ab_initio_ase_atoms)
                     ab_initio_calc.set_label("ESP")
-                    ab_initio_calc.calculate(cc_struct)
-
+                    try:
+                        ab_initio_calc.calculate(cc_struct)
+                    except Exception as e:
+                        print(f'Ab initio calculation for structure {i} is failed! Continuing with second structure...')
+                        os.system(f'mv {ab_initio_dir} err_{ab_initio_dir}_{i}')
+                        continue
+                        
                 elif isinstance(ab_initio_calc, ase.calculators.calculator.Calculator):
-                    ab_initio_calc.calculate(ab_initio_ase_atoms)
+                    try:
+                        ab_initio_calc.calculate(ab_initio_ase_atoms)
+                    except Exception as e:
+                        # print(e.message)
+                        print(f'Ab initio calculation for structure {i} is failed! Continuing with second structure...')
+                        os.system(f'mv {ab_initio_dir} err_{ab_initio_dir}_{i}')
+                        continue
 
                 else:
                     raise(NotImplementedError)
 
 
             ### Processing results of ab initio calculations
-            calc_to_cfg(ab_initio_calc,f'input.cfg.{i}',specorder, include_stress)
+            # checking if calculation is converged
+            if ab_initio_calculator == "QE":
+                results = ab_initio_calc.read_results()
+                if results != None:
+                    is_converged = True
+            elif ab_initio_calculator == "VASP":
+                is_converged = ab_initio_calc.read_convergence()
+            
+            # writing cfg file for MLIP
+            if is_converged:
+                calc_to_cfg(ab_initio_calc,f'input.cfg.{i}',specorder, include_stress)
+            else:
+                print(f'Ab initio calculation for structure {i} is not converged! Continuing with second structure...')
 
             os.system(f'rm -rf {ab_initio_dir}')
 
@@ -1414,141 +1581,112 @@ def calc_to_cfg(calc,path_to_cfg,specorder,include_stress = False):
     return
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-### Old functions 
-def cc_calc_to_cfg(cc_calc,path_to_cfg,specorder,include_stress = False):
-    """
-    Function for converting cellconstructor calculator object to cfg file for MTP training.
-    The cfg is written 
-
-    cc_calc - cellconstructor or ASE calculator object
-    path_to_cfg - path where the cfg file will be saved
-    specorder - a list with species order
+def are_ion_distances_good(structure, min_distances):
 
     """
+    structure - CellConstructor structure object
+    min_distances - dictionary with minimal interatomic distances between atoms in Angstroms
+    example of min_distances (similar to USPEX): 
+    {'Mg Mg': 1.0, 'Mg Si': 1.0, 'Mg O': 0.8, 'Si Si': 1.0, 'Si O': 0.8, 'O O': 1.0}
 
-    with open(path_to_cfg, 'w') as f:
-        f.write('\n')
-        f.write('BEGIN_CFG\n')
-        f.write(' Size\n')
-        f.write(f'    {cc_calc.structure.N_atoms}\n')
-        f.write(' Supercell\n')
-        cell = cc_calc.structure.unit_cell
-        f.write(f'         {cell[0][0]:.6f}      {cell[0][1]:.6f}      {cell[0][2]:.6f}\n')
-        f.write(f'         {cell[1][0]:.6f}      {cell[1][1]:.6f}      {cell[1][2]:.6f}\n')
-        f.write(f'         {cell[2][0]:.6f}      {cell[2][1]:.6f}      {cell[2][2]:.6f}\n')
-        f.write(' AtomData:  id type       cartes_x      cartes_y      cartes_z           fx          fy          fz\n')
-        # coords = cc_calc.structure.get_xcoords()
-        coords = cc_calc.structure.coords
-
-        # count = 1
-        # for i, atm in enumerate(structure.atoms):
-        #     if not atm in dictionary:
-        #         dictionary[atm] = count
-        #         count += 1
-        
-        # ityp = [dictionary[x] for x in self.atoms]
-
-        typat  = cc_calc.structure.get_atomic_types()
-
-        forces = cc_calc.results['forces']
-        for i in range(cc_calc.structure.N_atoms):
-            f.write(f'             {i+1:3}    {typat[i]-1}       {coords[i][0]:.6f}      {coords[i][1]:.6f}      {coords[i][2]:.6f}      {forces[i][0]:.6f} {forces[i][1]:.6f} {forces[i][2]:.6f}\n')
-        f.write(f' Energy\n')
-        f.write(f' {cc_calc.results["energy"]}\n')
-        if "stress" in cc_calc.results and include_stress:
-            pxx = -cc_calc.results["stress"][0]*cc_calc.structure.get_volume()
-            pyy = -cc_calc.results["stress"][1]*cc_calc.structure.get_volume()
-            pzz = -cc_calc.results["stress"][2]*cc_calc.structure.get_volume()
-            pyz = -cc_calc.results["stress"][3]*cc_calc.structure.get_volume()
-            pxz = -cc_calc.results["stress"][4]*cc_calc.structure.get_volume()
-            pxy = -cc_calc.results["stress"][5]*cc_calc.structure.get_volume()
-            f.write(f' PlusStress:  xx          yy          zz          yz          xz          xy\n')
-            f.write(f'        {pxx}    {pyy}    {pzz}    {pyz}    {pxz}    {pxy}\n')
-        f.write(f'END_CFG\n')
-        f.write(f'\n')
-
-    return
-
-def ase_calc_to_cfg(ase_calc,path_to_cfg,specorder):
-
-    """
-    Function for converting ASE object to cfg file for MTP training.
-    The cfg is written 
-
-    ase_calc - ASE calculator object
-    path_to_cfg - path where the cfg file will be saved
-    specorder - a list with species order
-
-    """
-
-    N_atoms = calc.atoms.get_number_of_atoms()
-    cell = calc.atoms.get_cell()
-    coords = calc.atoms.get_positions()
-
-    count = 1
-    dictionary = {}
-    for i, atm in enumerate(calc.atoms.get_atomic_numbers()):
-        if not atm in dictionary:
-            dictionary[atm] = count
-            count += 1
     
-    typat = [dictionary[x] for x in calc.atoms.get_atomic_numbers()]
-    forces = calc.get_forces()
-    energy = calc.get_potential_energy()
-    volume = calc.atoms.get_volume()
-    if include_stress:
-        stresses = calc.get_stress()
+    """
 
-    with open(path_to_cfg, 'w') as f:
-        f.write('\n')
-        f.write('BEGIN_CFG\n')
-        f.write(' Size\n')
-        f.write(f'    {N_atoms}\n')
-        f.write(' Supercell\n')
-        f.write(f'         {cell[0][0]:.6f}      {cell[0][1]:.6f}      {cell[0][2]:.6f}\n')
-        f.write(f'         {cell[1][0]:.6f}      {cell[1][1]:.6f}      {cell[1][2]:.6f}\n')
-        f.write(f'         {cell[2][0]:.6f}      {cell[2][1]:.6f}      {cell[2][2]:.6f}\n')
-        f.write(' AtomData:  id type       cartes_x      cartes_y      cartes_z           fx          fy          fz\n')
+    # the case when min_distances are not specified
+    if min_distances == None:
+        return True
 
-        for i in range(N_atoms):
-            f.write(f'             {i+1:3}    {typat[i]-1}       {coords[i][0]:.6f}      {coords[i][1]:.6f}      {coords[i][2]:.6f}      {forces[i][0]:.6f} {forces[i][1]:.6f} {forces[i][2]:.6f}\n')
-        f.write(f' Energy\n')
-        f.write(f' {energy}\n')
-        if include_stress:
-            pxx = -stresses[0]*volume
-            pyy = -stresses[1]*volume
-            pzz = -stresses[2]*volume
-            pyz = -stresses[3]*volume
-            pxz = -stresses[4]*volume
-            pxy = -stresses[5]*volume
-            f.write(f' PlusStress:  xx          yy          zz          yz          xz          xy\n')
-            f.write(f'        {pxx}    {pyy}    {pzz}    {pyz}    {pxz}    {pxy}\n')
-        f.write(f'END_CFG\n')
-        f.write(f'\n')
+    # converting min_distances to blmin dict as in ase.ga.utilities
+    blmin = convert_min_distances_to_bl(structure, min_distances)
 
-    return
+    atoms = structure.get_ase_atoms()
+
+    are_ion_distances_bad = atoms_too_close(atoms, blmin)
+
+    if are_ion_distances_bad: 
+        print('Structure violates min_distance constraints and will not be added!')
+        return False
+
+    return True
+
+def convert_min_distances_to_bl(structure,min_distances):
+
+    """
+    Function for converting USPEX-like min_distances dictionary to ase
+    """
+
+    itypes = [(structure.get_ityp_from_species(key.split()[0]),structure.get_ityp_from_species(key.split()[1])) for key in min_distances.keys()]
+
+    atoms = structure.get_ase_atoms()
+    
+    atomic_numbers = atoms.get_atomic_numbers()
+
+    inumbers = [(atomic_numbers[itypes[i][0]],atomic_numbers[itypes[i][1]]) for i in range(len(itypes))]
+
+    bl = dict(zip(inumbers, min_distances.values()))
+
+    # print(bl)
+    return bl
+
+# Function from ase.ga.utilities
+def atoms_too_close(atoms, bl, use_tags=False):
+    """Checks if any atoms in a are too close, as defined by
+    the distances in the bl dictionary.
+
+    use_tags: whether to use the Atoms tags to disable distance
+        checking within a set of atoms with the same tag.
+
+    Note: if certain atoms are constrained and use_tags is True,
+    this method may return unexpected results in case the
+    contraints prevent same-tag atoms to be gathered together in
+    the minimum-image-convention. In such cases, one should
+    (1) release the relevant constraints,
+    (2) apply the gather_atoms_by_tag function, and
+    (3) re-apply the constraints, before using the
+        atoms_too_close function.
+    """
+    a = atoms.copy()
+    if use_tags:
+        gather_atoms_by_tag(a)
+
+    pbc = a.get_pbc()
+    cell = a.get_cell()
+    num = a.get_atomic_numbers()
+    pos = a.get_positions()
+    tags = a.get_tags()
+    unique_types = sorted(list(set(num)))
+
+    neighbours = []
+    for i in range(3):
+        if pbc[i]:
+            neighbours.append([-1, 0, 1])
+        else:
+            neighbours.append([0])
+
+    for nx, ny, nz in itertools.product(*neighbours):
+        displacement = np.dot(cell.T, np.array([nx, ny, nz]).T)
+        pos_new = pos + displacement
+        distances = cdist(pos, pos_new)
+
+        if nx == 0 and ny == 0 and nz == 0:
+            if use_tags and len(a) > 1:
+                x = np.array([tags]).T
+                distances += 1e2 * (cdist(x, x) == 0)
+            else:
+                distances += 1e2 * np.identity(len(a))
+
+        iterator = itertools.combinations_with_replacement(unique_types, 2)
+        for type1, type2 in iterator:
+            x1 = np.where(num == type1)
+            x2 = np.where(num == type2)
+            try:
+                mindist = bl[(type1, type2)]
+            except KeyError:
+                mindist = bl[(type2, type1)]
+            except:
+                mindist = 0.0
+            # if np.min(distances[x1].T[x2]) < bl[(type1, type2)]:
+            if np.min(distances[x1].T[x2]) < mindist:
+                return True
+
+    return False
