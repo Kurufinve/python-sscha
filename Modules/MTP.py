@@ -1335,7 +1335,7 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
             ### Processing results of ab initio calculations
             # checking if calculation is converged
             if ab_initio_calculator == "QE":
-                results = ab_initio_calc.read_results()
+                results = ab_initio_calc.results
                 if results != None:
                     is_converged = True
             elif ab_initio_calculator == "VASP":
@@ -1549,7 +1549,7 @@ def calc_to_cfg(calc,path_to_cfg,specorder,include_stress = False):
             stresses = calc.results["stress"]
 
     else:
-        raise(NotImplementedError)
+        raise ValueError("Error, unknown calculator type")
 
     with open(path_to_cfg, 'w') as f:
         f.write('\n')
