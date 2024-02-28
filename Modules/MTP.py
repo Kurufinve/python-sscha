@@ -626,7 +626,7 @@ Error, the specified location to save the ensemble:
                 # Train MTP on generated ensemble
                 if self.train_on_every_ensemble:
                     ensemble_structures = self.minim.ensemble.structures
-                    ase_structures_list_to_cfg(ensemble_structures,'preselected.cfg')
+                    ase_structures_list_to_cfg(ensemble_structures,'preselected.cfg',self.specorder)
                     os.system('touch set.cfg')
                     train_mtp_on_cfg(self.specorder,self.mlip_run_command, self.pot_name, 
                         self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
@@ -634,7 +634,7 @@ Error, the specified location to save the ensemble:
                 # elif not self.train_on_every_ensemble:
                 #     if pop == start_pop:
                 #         ensemble_structures = self.minim.ensemble.structures
-                #         ase_structures_list_to_cfg(ensemble_structures,'preselected.cfg')
+                #         ase_structures_list_to_cfg(ensemble_structures,'preselected.cfg',self.specorder)
                 #         os.system('touch set.cfg')
                 #         train_mtp_on_cfg(self.specorder,self.mlip_run_command, self.pot_name, 
                 #             self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
@@ -875,7 +875,7 @@ Error, the specified location to save the ensemble:
                 # Train MTP on generated ensemble
                 if self.train_on_every_ensemble:
                     ensemble_structures = self.minim.ensemble.structures
-                    ase_structures_list_to_cfg(ensemble_structures,'preselected.cfg')
+                    ase_structures_list_to_cfg(ensemble_structures,'preselected.cfg',self.specorder)
                     os.system('touch set.cfg')
                     train_mtp_on_cfg(self.specorder,self.mlip_run_command, self.pot_name, 
                         self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
@@ -883,7 +883,7 @@ Error, the specified location to save the ensemble:
                 # elif not self.train_on_every_ensemble:
                 #     if pop == start_pop:
                 #         ensemble_structures = self.minim.ensemble.structures
-                #         ase_structures_list_to_cfg(ensemble_structures,'preselected.cfg')
+                #         ase_structures_list_to_cfg(ensemble_structures,'preselected.cfg',self.specorder)
                 #         os.system('touch set.cfg')
                 #         train_mtp_on_cfg(self.specorder, self.mlip_run_command, self.pot_name, 
                 #             self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
@@ -1383,7 +1383,7 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
 
     return  
 
-def ase_structures_list_to_cfg(ase_structures_list,path_to_cfg):
+def ase_structures_list_to_cfg(ase_structures_list,path_to_cfg,specorder):
 
     """
     Function for converting list of ase stuctures to one cfg file for MLIP package.
@@ -1396,12 +1396,15 @@ def ase_structures_list_to_cfg(ase_structures_list,path_to_cfg):
     with open(path_to_cfg, 'w') as f:
         for ase_structure in ase_structures_list:
             try:
-                # if structure is ase structure
+                # if structure is true ase structure (i.e. not CC structure) create new CC structure object
                 structure = CC.Structure.Structure()
+                # and generate CC structure from ase structure
                 structure.generate_from_ase_atoms(ase_structure)
             except AttributeError:
-                # if structure is CC structure
-                structure = ase_structure
+                # if structure is CC structure (i.e. not true ase structure) then copy it to the new object
+                structure = ase_structure.copy()
+                # and get true ase structure object from this CC structure
+                ase_structure = structure.get_ase_atoms()
                 
             # f.write('\n')
             f.write('BEGIN_CFG\n')
@@ -1415,9 +1418,10 @@ def ase_structures_list_to_cfg(ase_structures_list,path_to_cfg):
             f.write(' AtomData:  id type       cartes_x      cartes_y      cartes_z\n')
             # coords = structure.get_xcoords()
             coords = structure.coords
-            typat  = structure.get_ityp()
+            typat = ase_structure.get_chemical_symbols()
+            mapping = {val: i for i, val in enumerate(specorder)}
             for i in range(structure.N_atoms):
-                f.write(f'             {i+1:3}    {typat[i]}       {coords[i][0]:.6f}      {coords[i][1]:.6f}      {coords[i][2]:.6f} \n')
+                f.write(f'             {i+1:3}    {mapping[typat[i]]}       {coords[i][0]:.6f}      {coords[i][1]:.6f}      {coords[i][2]:.6f} \n')
             f.write(f'END_CFG\n')
             f.write(f'\n')
 
@@ -1530,10 +1534,11 @@ def calc_to_cfg(calc,path_to_cfg,specorder,include_stress = False):
                 dictionary[atm] = count
                 count += 1
         
-        typat = [dictionary[x] for x in calc.atoms.get_atomic_numbers()]
+        # typat = [dictionary[x] for x in calc.atoms.get_atomic_numbers()]
         forces = calc.get_forces()
         energy = calc.get_potential_energy()
         volume = calc.atoms.get_volume()
+        ase_structure = calc.atoms
         if include_stress:
             stresses = calc.get_stress()
 
@@ -1541,7 +1546,8 @@ def calc_to_cfg(calc,path_to_cfg,specorder,include_stress = False):
         N_atoms = calc.structure.N_atoms
         cell = calc.structure.unit_cell
         coords = calc.structure.coords
-        typat  = calc.structure.get_atomic_types()
+        # typat  = calc.structure.get_atomic_types()
+        ase_structure = calc.structure.get_ase_atoms()
         forces = calc.results["forces"]
         energy = calc.results["energy"]
         volume = calc.structure.get_volume()
@@ -1550,6 +1556,9 @@ def calc_to_cfg(calc,path_to_cfg,specorder,include_stress = False):
 
     else:
         raise ValueError("Error, unknown calculator type")
+
+    typat = ase_structure.get_chemical_symbols()
+    mapping = {val: i for i, val in enumerate(specorder)}    
 
     with open(path_to_cfg, 'w') as f:
         f.write('\n')
@@ -1563,7 +1572,7 @@ def calc_to_cfg(calc,path_to_cfg,specorder,include_stress = False):
         f.write(' AtomData:  id type       cartes_x      cartes_y      cartes_z           fx          fy          fz\n')
 
         for i in range(N_atoms):
-            f.write(f'             {i+1:3}    {typat[i]-1}       {coords[i][0]:.6f}      {coords[i][1]:.6f}      {coords[i][2]:.6f}      {forces[i][0]:.6f} {forces[i][1]:.6f} {forces[i][2]:.6f}\n')
+            f.write(f'             {i+1:3}    {mapping[typat[i]]}       {coords[i][0]:.6f}      {coords[i][1]:.6f}      {coords[i][2]:.6f}      {forces[i][0]:.6f} {forces[i][1]:.6f} {forces[i][2]:.6f}\n')
         f.write(f' Energy\n')
         f.write(f' {energy}\n')
         if include_stress:
