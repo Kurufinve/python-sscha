@@ -1,0 +1,46 @@
+/home/dpoletaev/miniconda3/envs/sscha/lib/python3.10/site-packages/sscha/aiida_ensemble.py:18: UserWarning: aiida or aiida-quantumespresso are not installed
+  warnings.warn('aiida or aiida-quantumespresso are not installed')
+cat: preselected.cfg: input file is output file
+/home/dpoletaev/miniconda3/envs/sscha/lib/python3.10/site-packages/ase/atoms.py:967: VisibleDeprecationWarning: Use get_global_number_of_atoms() instead
+  warnings.warn('Use get_global_number_of_atoms() instead',
+/home/dpoletaev/miniconda3/envs/sscha/lib/python3.10/site-packages/ase/calculators/lammpsrun.py:191: UserWarning: You are using an old syntax to set 'parameters'.
+Please use LAMMPSRUN.set().
+  warnings.warn(self.legacy_warn_string.format("parameters"))
+/home/dpoletaev/miniconda3/envs/sscha/lib/python3.10/site-packages/ase/utils/__init__.py:62: FutureWarning: Please use phonons.supercell instead of .N_c
+  warnings.warn(warning)
+/home/dpoletaev/miniconda3/envs/sscha/lib/python3.10/site-packages/ase/utils/__init__.py:62: FutureWarning: Please use phonons.compute_lattice_vectors() instead of .lattice_vectors()
+  warnings.warn(warning)
+cat: preselected.cfg: input file is output file
+/home/dpoletaev/miniconda3/envs/sscha/lib/python3.10/site-packages/cellconstructor/symmetries.py:1415: ComplexWarning: Casting complex values to real discards the imaginary part
+  dyn_matrix[3 * na : 3* na + 3, 3*nb: 3 * nb + 3] = Methods.convert_matrix_cart_cryst(fc, self.structure.unit_cell, True)
+/home/dpoletaev/miniconda3/envs/sscha/lib/python3.10/site-packages/cellconstructor/symmetries.py:776: ComplexWarning: Casting complex values to real discards the imaginary part
+  fcq[:,:,:] = final_fc
+/home/dpoletaev/miniconda3/envs/sscha/lib/python3.10/site-packages/sscha/SchaMinimizer.py:636: ComplexWarning: Casting complex values to real discards the imaginary part
+  self.dyn.structure.coords[:,:] = new_struct
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+cat: preselected.cfg: input file is output file
+mv: cannot move ‘dyn_mtp_training’ to a subdirectory of itself, ‘dyn_mtp_training/dyn_mtp_training’

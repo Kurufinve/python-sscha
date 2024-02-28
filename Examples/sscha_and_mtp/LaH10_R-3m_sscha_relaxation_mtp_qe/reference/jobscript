@@ -1,0 +1,12 @@
+#!/bin/bash 
+#SBATCH -p lenovo
+#SBATCH -t 3-00:00:00 
+#SBATCH -N 1
+#SBATCH -n 10
+
+#SBATCH -J  LaH10_NVT_NPT_MTP_VASP_0K
+#SBATCH -o  sscha_output
+#SBATCH -e  error
+
+module purge; source /home/dpoletaev/miniconda3/bin/activate sscha 
+python /home/dpoletaev/soft/mypython/sscha_relax_mtp_learn.py input_sscha.py
