@@ -1624,18 +1624,29 @@ def convert_min_distances_to_bl(structure,min_distances):
     Function for converting USPEX-like min_distances dictionary to ase
     """
 
-    itypes = [(structure.get_ityp_from_species(key.split()[0]),structure.get_ityp_from_species(key.split()[1])) for key in min_distances.keys()]
+    s = structure.get_ase_atoms()
 
-    atoms = structure.get_ase_atoms()
-    
-    atomic_numbers = atoms.get_atomic_numbers()
+    symbols_numbers = dict(zip(s.get_chemical_symbols(), s.get_atomic_numbers()))
 
-    inumbers = [(atomic_numbers[itypes[i][0]],atomic_numbers[itypes[i][1]]) for i in range(len(itypes))]
+    # New dictionary to store the transformed data
+    d = {}
 
-    bl = dict(zip(inumbers, min_distances.values()))
+    for key, value in min_distances.items():
+        # Split the key into the individual symbols
+        elements = key.split()
+        
+        # Attempt to replace symbols with numbers, creating a tuple as the new key
+        # This approach assumes all elements can be replaced; otherwise, they are ignored
+        try:
+            new_key = tuple(symbols_numbers[elem] for elem in elements if elem in symbols_numbers)
+            # Only add to the new dictionary if the new_key has two elements, matching your requirement
+            if len(new_key) == 2:
+                d[new_key] = value
+        except KeyError:
+            # Handle the case where an element isn't found in symbols_numbers, if necessary
+            pass
 
-    # print(bl)
-    return bl
+    return d
 
 # Function from ase.ga.utilities
 def atoms_too_close(atoms, bl, use_tags=False):
