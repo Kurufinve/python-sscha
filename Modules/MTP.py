@@ -183,6 +183,9 @@ class Ensemble_MTP(Ensemble):
             print(f'{len(structures)} are generated, and {len(constrained_structures)} are added to ensemble based on the user min_distances constraints')
             print(f'min_distances constraints are {self.min_distances}')
 
+        # Enforce all the processors to share the same structures
+        constrained_structures = CC.Settings.broadcast(constrained_structures)
+
         self.init_from_structures(constrained_structures)
 
 
