@@ -1342,11 +1342,14 @@ WARNING, the preconditioning is activated together with a root representation.
                 print ("Free energy = %16.8f +- %16.8f meV" % (self.__fe__[-1] * __RyTomev__,
                                                               self.__fe_err__[-1] * __RyTomev__))
 
-                print ("FC gradient modulus = %16.8f +- %16.8f bohr^2" % (self.__gc__[-1] * __RyTomev__,
-                                                                       self.__gc_err__[-1] * __RyTomev__))
-                print ("Struct gradient modulus = %16.8f +- %16.8f meV/A" % (self.__gw__[-1] * __RyTomev__,
-                                                                            self.__gw_err__[-1] * __RyTomev__))
-                print ("Kong-Liu effective sample size = ", self.__KL__[-1])
+                try:
+                    print ("FC gradient modulus = %16.8f +- %16.8f bohr^2" % (self.__gc__[-1] * __RyTomev__,
+                                                                           self.__gc_err__[-1] * __RyTomev__))
+                    print ("Struct gradient modulus = %16.8f +- %16.8f meV/A" % (self.__gw__[-1] * __RyTomev__,
+                                                                                self.__gw_err__[-1] * __RyTomev__))
+                    print ("Kong-Liu effective sample size = ", self.__KL__[-1])
+                except:
+                    pass
                 print ()
 
             if verbose >= 2:
