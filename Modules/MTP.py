@@ -141,31 +141,47 @@ class Ensemble_MTP(Ensemble):
         super_struct = self.dyn_0.structure.generate_supercell(self.dyn_0.GetSupercell())
 
         structures = []
+
         if evenodd:
             structs = self.dyn_0.ExtractRandomStructures(N // 2, self.T0, project_on_vectors = project_on_modes, lock_low_w = self.ignore_small_w, sobol = sobol, sobol_scramble = sobol_scramble, sobol_scatter = sobol_scatter)  # normal Sobol generator****Diegom_test****
 
 
 
             for i, s in enumerate(structs):
-                structures.append(s)
+                # structures.append(s)
                 new_s = s.copy()
                 # Get the opposite displacement structure
                 new_s.coords = super_struct.coords - new_s.get_displacement(super_struct)
-                structures.append(new_s)
+                # structures.append(new_s)
+                if self.min_distances != None:
+                    # adding the structure and its opposite counterpart only if both satisfy the min_distance constraints 
+                    if are_ion_distances_good(s, self.min_distances) and are_ion_distances_good(new_s, self.min_distances):
+                        structures.append(s)
+                        structures.append(new_s)
+                else:
+                    structures.append(s)
+                    structures.append(new_s)
+
+            constrained_structures = structures
+
         else:
             structures = self.dyn_0.ExtractRandomStructures(N, self.T0, project_on_vectors = project_on_modes, lock_low_w = self.ignore_small_w, sobol = sobol, sobol_scramble = sobol_scramble, sobol_scatter = sobol_scatter)  # normal Sobol generator****Diegom_test****
 
-        # filter structures by min_distance constraints if they are specified
-        if self.min_distances != None:
-            constrained_structures = []
-            for structure in structures:
-                if are_ion_distances_good(structure, self.min_distances):
-                    constrained_structures.append(structure)
-        else:
-            constrained_structures = structures
+            # filter structures by min_distance constraints if they are specified
+            if self.min_distances != None:
+                # creating list for storing only the structures that satisfy min_distance constraints 
+                constrained_structures = []
+                for structure in structures:
+                    if are_ion_distances_good(structure, self.min_distances):
+                        constrained_structures.append(structure)
+            else:
+                constrained_structures = structures
 
         # Enforce all the processors to share the same structures
         constrained_structures = CC.Settings.broadcast(constrained_structures)
+        if self.min_distances != None:
+            print(f'{len(structures)} are generated, and {len(constrained_structures)} are added to ensemble based on the user min_distances constraints')
+            print(f'min_distances constraints are {self.min_distances}')
 
         self.init_from_structures(constrained_structures)
 
@@ -1613,7 +1629,7 @@ def are_ion_distances_good(structure, min_distances):
     are_ion_distances_bad = atoms_too_close(atoms, blmin)
 
     if are_ion_distances_bad: 
-        print('Structure violates min_distance constraints and will not be added!')
+        # print('Structure violates min_distance constraints and will not be added!')
         return False
 
     return True
