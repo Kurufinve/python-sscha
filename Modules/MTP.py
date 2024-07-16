@@ -104,7 +104,7 @@ class Ensemble_MTP(Ensemble):
         super().__init__(dyn0, T0, supercell)
 
 
-    def generate(self, N, evenodd = True, project_on_modes = None, sobol = False, sobol_scramble = False, sobol_scatter = 0.0):
+    def generate(self, N, evenodd = True, project_on_modes = None, sobol = False, sobol_scramble = False, sobol_scatter = 0.0, min_distances = None, generate_good_only = True):
         """
         GENERATE THE ENSEMBLE
         =====================
@@ -140,54 +140,210 @@ class Ensemble_MTP(Ensemble):
         #super_dyn = self.dyn_0.GenerateSupercellDyn(self.supercell)
         super_struct = self.dyn_0.structure.generate_supercell(self.dyn_0.GetSupercell())
 
+
+
         structures = []
 
-        if evenodd:
-            structs = self.dyn_0.ExtractRandomStructures(N // 2, self.T0, project_on_vectors = project_on_modes, lock_low_w = self.ignore_small_w, sobol = sobol, sobol_scramble = sobol_scramble, sobol_scatter = sobol_scatter)  # normal Sobol generator****Diegom_test****
+        good_structures = [] # list for structures that satisfy min_distance constraints
+        bad_structures = []  # list for structures that does not satisfy min_distance constraints
 
-
-
-            for i, s in enumerate(structs):
-                # structures.append(s)
-                new_s = s.copy()
-                # Get the opposite displacement structure
-                new_s.coords = super_struct.coords - new_s.get_displacement(super_struct)
-                # structures.append(new_s)
-                if self.min_distances != None:
-                    # adding the structure and its opposite counterpart only if both satisfy the min_distance constraints 
-                    if are_ion_distances_good(s, self.min_distances) and are_ion_distances_good(new_s, self.min_distances):
-                        structures.append(s)
-                        structures.append(new_s)
-                else:
-                    structures.append(s)
-                    structures.append(new_s)
-
-            constrained_structures = structures
+        if self.min_distances != None and generate_good_only:
+            print('Generating only good structures!')
+            self.generate_good_structures(N, evenodd, project_on_modes, sobol, sobol_scramble, sobol_scatter, min_good_structures_ratio = 0.99999, stiffen_factor = 2)
 
         else:
-            structures = self.dyn_0.ExtractRandomStructures(N, self.T0, project_on_vectors = project_on_modes, lock_low_w = self.ignore_small_w, sobol = sobol, sobol_scramble = sobol_scramble, sobol_scatter = sobol_scatter)  # normal Sobol generator****Diegom_test****
+            if evenodd:
+                structs = self.dyn_0.ExtractRandomStructures(N // 2, self.T0, project_on_vectors = project_on_modes, lock_low_w = self.ignore_small_w, sobol = sobol, sobol_scramble = sobol_scramble, sobol_scatter = sobol_scatter)  # normal Sobol generator****Diegom_test****
 
-            # filter structures by min_distance constraints if they are specified
-            if self.min_distances != None:
-                # creating list for storing only the structures that satisfy min_distance constraints 
-                constrained_structures = []
-                for structure in structures:
-                    if are_ion_distances_good(structure, self.min_distances):
-                        constrained_structures.append(structure)
-            else:
+
+
+                for i, s in enumerate(structs):
+                    # structures.append(s)
+                    new_s = s.copy()
+                    # Get the opposite displacement structure
+                    new_s.coords = super_struct.coords - new_s.get_displacement(super_struct)
+                    # structures.append(new_s)
+                    # if self.min_distances != None:
+                    if 0:
+                        # adding the structure and its opposite counterpart only if both satisfy the min_distance constraints 
+                        if are_ion_distances_good(s, self.min_distances) and are_ion_distances_good(new_s, self.min_distances):
+                            structures.append(s)
+                            structures.append(new_s)
+                    else:
+                        structures.append(s)
+                        structures.append(new_s)
+
                 constrained_structures = structures
 
-        # Enforce all the processors to share the same structures
-        constrained_structures = CC.Settings.broadcast(constrained_structures)
-        if self.min_distances != None:
-            print(f'{len(structures)} are generated, and {len(constrained_structures)} are added to ensemble based on the user min_distances constraints')
-            print(f'min_distances constraints are {self.min_distances}')
+            else:
+                structures = self.dyn_0.ExtractRandomStructures(N, self.T0, project_on_vectors = project_on_modes, lock_low_w = self.ignore_small_w, sobol = sobol, sobol_scramble = sobol_scramble, sobol_scatter = sobol_scatter)  # normal Sobol generator****Diegom_test****
+
+                # filter structures by min_distance constraints if they are specified
+                # if self.min_distances != None:
+                if 0:
+                    # creating list for storing only the structures that satisfy min_distance constraints 
+                    constrained_structures = []
+                    for structure in structures:
+                        if are_ion_distances_good(structure, self.min_distances):
+                            constrained_structures.append(structure)
+                else:
+                    constrained_structures = structures
+
+            # Enforce all the processors to share the same structures
+            constrained_structures = CC.Settings.broadcast(constrained_structures)
+            # if self.min_distances != None:
+            if 0:
+                print(f'{len(structures)} are generated, and {len(constrained_structures)} are added to ensemble based on the user-defined min_distances constraints')
+                print(f'min_distances constraints are {self.min_distances}')
+
+            self.init_from_structures(constrained_structures)
+
+
+    def generate_good_structures(self, N, evenodd = True, project_on_modes = None, sobol = False, sobol_scramble = False, sobol_scatter = 0.0, min_good_structures_ratio = 0.99999, stiffen_factor = 2):
+        """
+        GENERATE THE ENSEMBLE WITH ONLY GOOD STRUCTURES
+        ===============================================
+
+        This subroutine generates the ensemble from dyn0 and T0 setted when this
+        class is created. 
+        All structures in the generated ensemble satisfy the min_distance constraints if they are specified
+        You still need to generate the forces for the configurations.
+
+        Parameters
+        ----------
+            N : int
+                The number of random configurations to be extracted
+            evenodd : bool, optional
+                If true for each configuration also the opposite is extracted
+            project_on_modes : ndarray(size=(3*nat_sc, nproj)), optional
+                If different from None the displacements are projected on the
+                given modes.
+            sobol : bool, optional (Default = False)
+                 Defines if the calculation uses random Gaussian generator or Sobol Gaussian generator.
+            sobol_scramble : bool, optional (Default = False)
+                Set the optional scrambling of the generated numbers taken from the Sobol sequence.
+            sobol_scatter : real (0.0 to 1) (Deafault = 0.0)
+                Set the scatter parameter to displace the Sobol positions randommly.
+
+        """
+
+        if evenodd and (N % 2 != 0):
+            raise ValueError("Error, evenodd allowed only with an even number of random structures")
+
+        self.N = N
+        Nat_sc = np.prod(self.supercell) * self.dyn_0.structure.N_atoms
+        self.structures = []
+        #super_dyn = self.dyn_0.GenerateSupercellDyn(self.supercell)
+        super_struct = self.dyn_0.structure.generate_supercell(self.dyn_0.GetSupercell())
+
+        
+
+
+
+
+        structures_are_good = False
+
+        attempts = 0
+        while not structures_are_good and attempts < 10:
+            # checking if min_distances criteria are stated
+            if self.min_distances == None:
+                # if min_distances are not stated than no checking will be used
+                structures_are_good = True
+
+            structures = []
+
+            good_structures = [] # list for configurations that satisfy min_distance constraints
+            bad_structures = []  # list for configurations that does not satisfy min_distance constraints
+
+            # generating the configurations with current dyn_0
+            if evenodd:
+                structs = self.dyn_0.ExtractRandomStructures(N // 2, self.T0, project_on_vectors = project_on_modes, lock_low_w = self.ignore_small_w, sobol = sobol, sobol_scramble = sobol_scramble, sobol_scatter = sobol_scatter)  # normal Sobol generator****Diegom_test****
+
+                for i, s in enumerate(structs):
+                    # structures.append(s)
+                    new_s = s.copy()
+                    # Get the opposite displacement structure
+                    new_s.coords = super_struct.coords - new_s.get_displacement(super_struct)
+                    structures.append(s)
+                    structures.append(new_s)
+                    if self.min_distances != None:
+
+                        # adding new and opposite displacement configuration only if both satisfy the min_distance criteria 
+                        if are_ion_distances_good(s, self.min_distances) and are_ion_distances_good(new_s, self.min_distances):
+                            good_structures.append(s)
+                            good_structures.append(new_s)
+                        else:
+                            bad_structures.append(s)
+                            bad_structures.append(new_s)       
+
+                        # if are_ion_distances_good(s, self.min_distances):
+                        #     good_structures.append(s)
+                        # else:
+                        #     bad_structures.append(s)
+
+                        # if are_ion_distances_good(new_s, self.min_distances):
+                        #     good_structures.append(new_s)
+                        # else:
+                        #     bad_structures.append(new_s)      
+                    # else:
+                    #     good_structures.append(s)
+                    #     good_structures.append(new_s)
+
+            else:
+                structs = self.dyn_0.ExtractRandomStructures(N, self.T0, project_on_vectors = project_on_modes, lock_low_w = self.ignore_small_w, sobol = sobol, sobol_scramble = sobol_scramble, sobol_scatter = sobol_scatter)  # normal Sobol generator****Diegom_test****
+                    
+                if self.min_distances != None:
+
+                    for s in structs:
+                        structures.append(s)
+                        if are_ion_distances_good(s, self.min_distances):
+                            good_structures.append(s)
+                        else:
+                            bad_structures.append(s)
+                else:
+                    structures = structs
+
+
+            good_structures_ratio = float(len(good_structures))/float(len(structures)) # ratio of good structures in ensemble
+            bad_structures_ratio = float(len(bad_structures))/float(len(structures))   # ratio of bad structures in ensemble
+
+            if good_structures_ratio >= min_good_structures_ratio:
+                print(f'{len(structures)} structures are generated in total, {len(good_structures)} structures are good, while {len(bad_structures)} structures are bad according to the the user min_distances constraints')
+                print(f'min_distances constraints are {self.min_distances}')
+                structures_are_good = True
+                # break
+
+            else:
+                print(f'{len(structures)} structures are generated in total, {len(good_structures)} structures are good, while {len(bad_structures)} structures are bad according to the the user min_distances constraints')
+                print(f'min_distances constraints are {self.min_distances}')
+                print(f'Stiffing the dynamical matrix multiplying the force constants by {stiffen_factor}')
+                # in the case when there is not the first attempt to generate structures we check 
+                # if the number of good structres increasing or decreasing due to stiffening the dynamical matrix
+                if attempts > 0:
+                    # if the number of good structures is decreasing, we stop to stiffen the dynamical matrix further
+                    if len(good_structures) < len(good_structures_prev):
+                        print(f'The number of good structres is decreasing with stiffening the dynamical matrix! I will not try to do it anymore!')
+                        structures = structures_prev
+                        print(f'Info from previous step: {len(structures_prev)} structures are generated in total, {len(good_structures_prev)} structures are good, while {len(bad_structures_prev)} structures are bad according to the the user min_distances constraints')
+                        break
+
+                good_structures_prev = good_structures.copy()  
+                bad_structures_prev = bad_structures.copy()  
+                structures_prev = structures.copy() # creating the copy of structures list  
+                # stiff the dynamical matrix
+                for i in range(len(self.dyn_0.q_tot)):
+                    self.dyn_0.dynmats[i] *= stiffen_factor
+
+                attempts += 1 
+
+
+
+
 
         # Enforce all the processors to share the same structures
-        constrained_structures = CC.Settings.broadcast(constrained_structures)
+        structures = CC.Settings.broadcast(structures)
 
-        self.init_from_structures(constrained_structures)
-
+        self.init_from_structures(structures)
 
 
     def compute_ensemble(self, calculator, compute_stress = True, stress_numerical = False,
@@ -427,7 +583,7 @@ class Ensemble_MTP(Ensemble):
                             train_mtp_on_cfg(self.specorder,self.mlip_run_command, self.pot_name, 
                                 self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
                                 self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, 
-                                train_local_mtps = False, pop = 'ensemble_retrain', np_ab_initio = self.np_ab_initio)
+                                train_local_mtps = False, pop = 'ensemble_retrain', np_ab_initio = self.np_ab_initio, min_distances = self.min_distances)
                             retrain_count_fails = 0
                         except:
                             retrain_count_fails += 1
@@ -524,6 +680,7 @@ class SSCHA_MTP(SSCHA):
                  retrain = False,
                  np_ab_initio = 1,
                  np_mlp_train = 1,
+                 min_distances = None,  
                  **kwargs):
 
         # super().__init__(minimizer=minimizer, ase_calculator=ase_calculator, N_configs=N_configs, max_pop=max_pop,
@@ -555,6 +712,7 @@ class SSCHA_MTP(SSCHA):
         self.retrain = retrain # IMPORTANT TAG!!! if we wish to retrain the MTP on structures produced with extrapolation control
         self.np_ab_initio = np_ab_initio
         self.np_mlp_train = np_mlp_train
+        self.min_distances = min_distances
         # super().__init__(minimizer=self.minimizer, ase_calculator=self.ase_calculator, N_configs=self.N_configs, max_pop=self.max_pop,
         #          save_ensemble = self.save_ensemble, cluster = self.cluster)
 
@@ -649,7 +807,7 @@ Error, the specified location to save the ensemble:
                     os.system('touch set.cfg')
                     train_mtp_on_cfg(self.specorder,self.mlip_run_command, self.pot_name, 
                         self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
-                        self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps, pop, self.np_ab_initio)
+                        self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps, pop, self.np_ab_initio, self.np_mlp_train, self.min_distances)
                 # elif not self.train_on_every_ensemble:
                 #     if pop == start_pop:
                 #         ensemble_structures = self.minim.ensemble.structures
@@ -657,7 +815,7 @@ Error, the specified location to save the ensemble:
                 #         os.system('touch set.cfg')
                 #         train_mtp_on_cfg(self.specorder,self.mlip_run_command, self.pot_name, 
                 #             self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
-                #             self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps,pop, self.np_ab_initio)
+                #             self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps,pop, self.np_ab_initio, self.np_mlp_train, self.min_distances)
                 #     else:
                 #         pass
 
@@ -898,7 +1056,7 @@ Error, the specified location to save the ensemble:
                     os.system('touch set.cfg')
                     train_mtp_on_cfg(self.specorder,self.mlip_run_command, self.pot_name, 
                         self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
-                        self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps,pop, self.np_ab_initio)
+                        self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps,pop, self.np_ab_initio, self.np_mlp_train, self.min_distances)
                 # elif not self.train_on_every_ensemble:
                 #     if pop == start_pop:
                 #         ensemble_structures = self.minim.ensemble.structures
@@ -906,7 +1064,7 @@ Error, the specified location to save the ensemble:
                 #         os.system('touch set.cfg')
                 #         train_mtp_on_cfg(self.specorder, self.mlip_run_command, self.pot_name, 
                 #             self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
-                #             self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps,pop, self.np_ab_initio)
+                #             self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps,pop, self.np_ab_initio, self.np_mlp_train, self.min_distances)
                 #     else:
                 #         pass
 
@@ -1105,7 +1263,36 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
                     train_local_mtps = False,
                     pop = 0,
                     np_ab_initio = 1,
-                    np_mlp_train = 1):
+                    np_mlp_train = 1,
+                    min_distances = None,
+                    level_up_mtp = False,
+                    start_mtp_level = 16,
+                    path_to_mtp_templates = None,
+                    max_rmse_energy = 0.1,
+                    max_rmse_forces = 1.0,
+                    max_rmse_stress = 10.0):
+
+    """
+    Function for training MTP with energies, forces, and stresses that are obtained from ase calculator.
+    Parameters:
+    specorder : (list) order of species in MTP. Needed in order to avoid coincidental mixing the atom types in multicomponent systems;
+    mlip_run_command : (str) command for running mlip in the system;
+    pot_name : (str) the name of MTP that need to be trained or retrained;
+    ab_initio_calculator : (str) name of ab initio claulcator (currectly only VASP an Qe);
+    ab_initio_parameters : (dict) parameters for ab initio calculator (currectly only VASP an Qe);
+    ab_initio_run_command : (str) command for running ab initio calculator in the system;
+    ab_initio_kresol : (float) k-point resolution in electronic convergence problem;
+    ab_initio_pseudos : (str) path to ab initio pseudopotentials (needed for QE calculator);
+    ab_initio_cluster : (sscha.Cluster.Cluster) cluster object for remote submission of ab initio calculations (working with QE only);
+    iteration_limit : (int) maximum number of iterations in MTP training;
+    level_up_mtp : (bool) if True one can level up MTP if MTP of current level gives large errors after training;
+    start_mtp_level : (int) the starting level of MTP after level up;
+    path_to_mtp_templates : (str) path to the templates with new MTPs;
+    max_rmse_energy : (float) maximum RMSE for energy per atom that allowed for current MTP, if exceeded then level-up of MTP is situated;
+    max_rmse_forces : (float) maximum RMSE for forces that allowed for current MTP, if exceeded then level-up of MTP is situated;
+    max_rmse_stress : (float) maximum RMSE for stresses that allowed for current MTP, if exceeded then level-up of MTP is situated;
+
+    """
 
     print(f"Preparing files for (re)training MTP {pot_name}")
     # cmd_gain_cfg   = 'cat preselected.cfg* >> preselected.cfg; rm -f preselected.cfg.*'
@@ -1163,6 +1350,17 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
                 print(f'Ab initio directory {ab_initio_dir} already exists!')
             
             ab_initio_ase_atoms = one_cfg_to_atoms(f'selected.cfg.{i}',specorder) 
+
+            cc_struct = CC.Structure.Structure()
+            cc_struct.generate_from_ase_atoms(ab_initio_ase_atoms)
+
+            if min_distances != None:
+                # skiping
+                if not are_ion_distances_good(cc_struct, min_distances):
+                    print(f'Skipping structure selected.cfg.{i} for training as it does not satisfy min_distances constraints')
+                    os.system(f'mv selected.cfg.{i} pop{pop}.bad.selected.cfg.{i}')
+                    continue
+                # else:
 
             k_points = calc_ngkpt(ab_initio_ase_atoms.cell.reciprocal(),ab_initio_kresol)
             print(f'KPOINTS: {k_points}')
@@ -1282,6 +1480,13 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
                 else:
                     ispin = 1
 
+                if 'NCORE' in ab_initio_parameters.keys():
+                    ncore = ab_initio_parameters['NCORE']
+                elif 'ncore' in ab_initio_parameters.keys():
+                    ncore = ab_initio_parameters['ncore']
+                else:
+                    ncore = 1
+
                 NATOMS = ab_initio_ase_atoms.get_number_of_atoms()
                 if 'MAGMOM' in ab_initio_parameters.keys():
                     magmom = ab_initio_parameters['MAGMOM']
@@ -1312,6 +1517,7 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
                                       lreal = lreal,
                                       ispin = ispin,
                                       magmom = magmom,
+                                      ncore = ncore,
                                       )
                 # ab_initio_calc.set_directory(ab_initio_dir)
                 in_ext  = "POSCAR"
@@ -1369,28 +1575,32 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
             os.system(f'rm -rf {ab_initio_dir}')
 
 
-        os.system(f'cp set.cfg set.cfg.bak')
-
-        os.system('cat input.cfg* >> set.cfg')
-        os.system(f'cp {pot_name} {pot_name}.bak')
-        print('Start training MLIP')
-        os.system(cmd_mlip_train)
-        print('End training MLIP')
-        if train_local_mtps:
-            os.system(f'cat input.cfg* >> all_input_pop_{str(pop)}.cfg')
-            os.system(f'cat selected.cfg* >> all_selected_pop_{str(pop)}.cfg')
-            os.system(f'mv set.cfg set_pop_{str(pop)}.cfg')
-            os.system(f'cp {pot_name} {pot_name}.pop_{str(pop)}')
-            # os.system(f'cp {pot_name}.bak {pot_name}')
-            os.system('rm -f input.cfg*')
-            os.system('rm -f selected.cfg*')
-            os.system('rm -f preselected.cfg*')
+        n_input_cmd = 'ls input.cfg.* | wc -l'
+        n_input = int(os.popen(n_input_cmd).read().split()[0])    
+        if n_input > 0: 
+            os.system(f'cp set.cfg set.cfg.bak')
+            os.system('cat input.cfg* >> set.cfg')
+            os.system(f'cp {pot_name} {pot_name}.bak')
+            print('Start training MLIP')
+            os.system(cmd_mlip_train)
+            print('End training MLIP')
+            if train_local_mtps:
+                os.system(f'cat input.cfg* >> all_input_pop_{str(pop)}.cfg')
+                os.system(f'cat selected.cfg* >> all_selected_pop_{str(pop)}.cfg')
+                os.system(f'mv set.cfg set_pop_{str(pop)}.cfg')
+                os.system(f'cp {pot_name} {pot_name}.pop_{str(pop)}')
+                # os.system(f'cp {pot_name}.bak {pot_name}')
+                os.system('rm -f input.cfg*')
+                os.system('rm -f selected.cfg*')
+                os.system('rm -f preselected.cfg*')
+            else:
+                os.system(f'cat input.cfg* >> all_input.cfg')
+                os.system(f'cat selected.cfg* >> all_selected.cfg')
+                os.system('rm -f input.cfg*')
+                os.system('rm -f selected.cfg*')
+                os.system('rm -f preselected.cfg*')
         else:
-            os.system(f'cat input.cfg* >> all_input.cfg')
-            os.system(f'cat selected.cfg* >> all_selected.cfg')
-            os.system('rm -f input.cfg*')
-            os.system('rm -f selected.cfg*')
-            os.system('rm -f preselected.cfg*')
+            print('No new configurations were calculated! Training will be ommited this time!')
     else:
         print('No new configurations are need to be added into the training set! Training will be ommited this time!')
         try:
