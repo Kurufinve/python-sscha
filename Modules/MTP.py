@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 import sys, os
+from datetime import datetime
 import warnings
 import numpy as np
 import time
@@ -46,6 +47,8 @@ from sscha.aiida_ensemble import AiiDAEnsemble
 import itertools
 from scipy.spatial.distance import cdist
 
+from concurrent.futures import ProcessPoolExecutor, wait
+
 # Try to load the parallel library if any
 try:
     from mpi4py import MPI
@@ -74,7 +77,11 @@ class Ensemble_MTP(Ensemble):
                  retrain = True, 
                  np_ab_initio = 1,
                  np_mlp_train = 1,  
-                 min_distances = None,               
+                 min_distances = None,
+                 try_generate_good_only = True,
+                 min_good_fraction = 0.5,
+                 stiffen_factor = 2,
+                 include_bad_structures = True,
                  **kwargs):
 
         self.specorder = specorder 
@@ -95,6 +102,10 @@ class Ensemble_MTP(Ensemble):
         self.np_ab_initio = np_ab_initio
         self.np_mlp_train = np_mlp_train
         self.min_distances = min_distances
+        self.try_generate_good_only = try_generate_good_only
+        self.min_good_fraction = min_good_fraction
+        self.stiffen_factor = stiffen_factor
+        self.include_bad_structures = include_bad_structures # if True include structures that do not satisfy the mindistance constraints
         # super().__init__(dyn0, T0, supercell, **kwargs)
 
         # Setup any other keyword given in input (raising the error if not already defined)
@@ -104,7 +115,7 @@ class Ensemble_MTP(Ensemble):
         super().__init__(dyn0, T0, supercell)
 
 
-    def generate(self, N, evenodd = True, project_on_modes = None, sobol = False, sobol_scramble = False, sobol_scatter = 0.0, min_distances = None, generate_good_only = True):
+    def generate(self, N, evenodd = True, project_on_modes = None, sobol = False, sobol_scramble = False, sobol_scatter = 0.0, min_distances = None):
         """
         GENERATE THE ENSEMBLE
         =====================
@@ -147,9 +158,9 @@ class Ensemble_MTP(Ensemble):
         good_structures = [] # list for structures that satisfy min_distance constraints
         bad_structures = []  # list for structures that does not satisfy min_distance constraints
 
-        if self.min_distances != None and generate_good_only:
+        if self.min_distances != None and self.try_generate_good_only:
             print('Generating only good structures!')
-            self.generate_good_structures(N, evenodd, project_on_modes, sobol, sobol_scramble, sobol_scatter, min_good_structures_ratio = 0.99999, stiffen_factor = 2)
+            self.generate_good_structures(N, evenodd, project_on_modes, sobol, sobol_scramble, sobol_scatter, min_good_structures_ratio = 0.5, stiffen_factor = 2)
 
         else:
             if evenodd:
@@ -163,8 +174,9 @@ class Ensemble_MTP(Ensemble):
                     # Get the opposite displacement structure
                     new_s.coords = super_struct.coords - new_s.get_displacement(super_struct)
                     # structures.append(new_s)
-                    # if self.min_distances != None:
-                    if 0:
+                    # check if min_distances are specified and we do not allow to include the not sartisfying structures into ensemble 
+                    if self.min_distances != None and not self.include_bad_structures:
+                    # if 0:
                         # adding the structure and its opposite counterpart only if both satisfy the min_distance constraints 
                         if are_ion_distances_good(s, self.min_distances) and are_ion_distances_good(new_s, self.min_distances):
                             structures.append(s)
@@ -179,8 +191,8 @@ class Ensemble_MTP(Ensemble):
                 structures = self.dyn_0.ExtractRandomStructures(N, self.T0, project_on_vectors = project_on_modes, lock_low_w = self.ignore_small_w, sobol = sobol, sobol_scramble = sobol_scramble, sobol_scatter = sobol_scatter)  # normal Sobol generator****Diegom_test****
 
                 # filter structures by min_distance constraints if they are specified
-                # if self.min_distances != None:
-                if 0:
+                if self.min_distances != None and not self.include_bad_structures:
+                # if 0:
                     # creating list for storing only the structures that satisfy min_distance constraints 
                     constrained_structures = []
                     for structure in structures:
@@ -199,7 +211,7 @@ class Ensemble_MTP(Ensemble):
             self.init_from_structures(constrained_structures)
 
 
-    def generate_good_structures(self, N, evenodd = True, project_on_modes = None, sobol = False, sobol_scramble = False, sobol_scatter = 0.0, min_good_structures_ratio = 0.99999, stiffen_factor = 2):
+    def generate_good_structures(self, N, evenodd = True, project_on_modes = None, sobol = False, sobol_scramble = False, sobol_scatter = 0.0):
         """
         GENERATE THE ENSEMBLE WITH ONLY GOOD STRUCTURES
         ===============================================
@@ -307,9 +319,10 @@ class Ensemble_MTP(Ensemble):
             good_structures_ratio = float(len(good_structures))/float(len(structures)) # ratio of good structures in ensemble
             bad_structures_ratio = float(len(bad_structures))/float(len(structures))   # ratio of bad structures in ensemble
 
-            if good_structures_ratio >= min_good_structures_ratio:
+            if good_structures_ratio >= self.min_good_fraction:
                 print(f'{len(structures)} structures are generated in total, {len(good_structures)} structures are good, while {len(bad_structures)} structures are bad according to the the user min_distances constraints')
                 print(f'min_distances constraints are {self.min_distances}')
+                print(f'Great!!! The user specified min_distances constraints are satisfied!')
                 structures_are_good = True
                 # break
 
@@ -324,6 +337,7 @@ class Ensemble_MTP(Ensemble):
                     if len(good_structures) < len(good_structures_prev):
                         print(f'The number of good structres is decreasing with stiffening the dynamical matrix! I will not try to do it anymore!')
                         structures = structures_prev
+                        good_structures = good_structures_prev
                         print(f'Info from previous step: {len(structures_prev)} structures are generated in total, {len(good_structures_prev)} structures are good, while {len(bad_structures_prev)} structures are bad according to the the user min_distances constraints')
                         break
 
@@ -332,19 +346,63 @@ class Ensemble_MTP(Ensemble):
                 structures_prev = structures.copy() # creating the copy of structures list  
                 # stiff the dynamical matrix
                 for i in range(len(self.dyn_0.q_tot)):
-                    self.dyn_0.dynmats[i] *= stiffen_factor
+                    self.dyn_0.dynmats[i] *= self.stiffen_factor
 
                 attempts += 1 
 
 
 
-
+        # include only good structres in ensemble if include_bad_structures = False
+        if not self.include_bad_structures:
+            structures = good_structures
 
         # Enforce all the processors to share the same structures
         structures = CC.Settings.broadcast(structures)
 
+
         self.init_from_structures(structures)
 
+    def get_noncomputed(self):
+        """
+        Get another ensemble with only the non computed configurations.
+        This may be used to resubmit only the non computed values
+        """
+
+        non_mask = ~self.force_computed
+        if self.has_stress:
+            non_mask = non_mask & (~self.stress_computed)
+
+        return self.split(non_mask)
+
+    def remove_noncomputed(self):
+        """
+        Removed all the incomplete calculation from the ensemble.
+        It may be used to run a minimization even if the ensemble was not completely calculated.
+        """
+
+        good_mask = np.copy(self.force_computed)
+        if self.has_stress:
+            good_mask = good_mask & self.stress_computed
+
+        self.N = np.sum( good_mask.astype(int))
+        self.forces = self.forces[good_mask, :, :]
+        self.sscha_forces = self.sscha_forces[good_mask, :, :]
+        self.stresses = self.stresses[good_mask, :, :]
+        self.energies = self.energies[good_mask]
+        self.sscha_energies = self.sscha_energies[good_mask]
+        self.xats = self.xats[good_mask, :, :]
+        self.u_disps = self.u_disps[good_mask, :]
+        self.force_computed = self.force_computed[good_mask]
+        self.stress_computed = self.stress_computed[good_mask]
+
+        self.structures = [self.structures[x] for x in np.arange(len(good_mask))[good_mask]]
+        self.all_properties = [self.all_properties[x] for x in np.arange(len(good_mask))[good_mask]]
+
+
+        self.rho = self.rho[good_mask]
+
+        # Check everything and update the weights
+        self.update_weights(self.current_dyn, self.current_T)
 
     def compute_ensemble(self, calculator, compute_stress = True, stress_numerical = False,
                          cluster = None, verbose = True):
@@ -370,7 +428,6 @@ class Ensemble_MTP(Ensemble):
                 the sscha code.
         """
 
-
         # Check if the calculator is a cluster
         is_cluster = False
         if not cluster is None:
@@ -394,15 +451,13 @@ class Ensemble_MTP(Ensemble):
             computing_ensemble = self.get_noncomputed()
             self.remove_noncomputed()
 
-        # Remove the structures that do not satisfy minDist constraints 
-
-
         # Computing energy and forces for structures in the ensemble
         if is_cluster:
             print("BEFORE COMPUTING:", self.all_properties)
             cluster.compute_ensemble(computing_ensemble, calculator, compute_stress)
 
         else:
+            # self.get_energy_forces(calculator, compute_stress, stress_numerical, verbose = verbose)
             computing_ensemble.get_energy_forces(calculator, compute_stress, stress_numerical, verbose = verbose)
 
         print("CE BEFORE MERGE:", len(self.force_computed))
@@ -523,93 +578,153 @@ class Ensemble_MTP(Ensemble):
             total_forces = np.empty( N_rand * nat3, dtype = np.float64)
             total_stress = np.empty( N_rand * 9, dtype = np.float64)
 
-        i0 = 0
-        for i in range(start, stop):
 
-            # Avoid performing this calculation if already done
-            if skip_computed:
-                if self.force_computed[i]:
-                    if compute_stress:
-                        if self.stress_computed[i]:
+
+        results_list = []
+
+
+        ### Parallel execution of the calculations
+
+        # it is assumed that user pointed out the maximum number of available CPUs for MTP training
+        # and if the number of MPI ranks used for this program is smaller than number of available CPU then we use other 
+        # N_par = self.np_mlp_train // size 
+        N_par = 1 # parallel execution provide results that are different from sequential execution, need for debugging 
+
+        # print(f"!!!! N_par = {N_par}")
+
+
+        # Parallel block 
+        if N_par > 1:
+            print (f"Parallel computation of ensemble on {N_par} processors")
+
+            # Creating dict for mapping i to i0
+            # i0 is the number of structure within the current MPI rank
+            # i is the number of structure within all MPI ranks
+            # if number of MPI ranks is 1 then i0 = i
+            i0_map = {} 
+            # print(f'start = {start}') 
+            # print(f'stop = {stop}') 
+            for i0, i in enumerate(range(start, stop)):
+                # print(f"i0 = {i0}, i = {i}")
+                i0_map[i] = i0         
+
+            # testing the compute_structure function
+            # for i0, i in enumerate(range(start, stop)):
+            #     i, energy_, forces_, stress_ = compute_structure(i)
+
+            # Parallel execution of calculations with ProcessPoolExecutor on N_par processors
+            with ProcessPoolExecutor(max_workers=N_par) as executor:
+                print(f'Submitting the calculations')
+                results_list = [executor.submit(compute_structure, i, structures, stop, ase_calculator) for i in range(start, stop)]
+                # results_list = list(executor.map(compute_structure, range(start, stop)))
+
+                print(f'Waiting for configurations are computed')
+                wait(results_list)
+                # print(results_list)
+                print(f'All tasks are done')
+
+                # Processing the results after the parallel execution
+                for future_result in results_list:
+                    i, energy_, forces_, stress_ = future_result.result()  # Retrieve the result of the calculation
+                    if energy_ is not None and forces_ is not None:
+                        i0 = i0_map[i] # restoring i0 index from mapping dict
+                        energies[i0] = energy_
+                        forces[nat3*i0 : nat3*i0 + nat3] = forces_.reshape(nat3)
+                        if compute_stress and stress_ is not None:
+                            stress[9*i0 : 9*i0 + 9] = stress_
+
+        ### Sequential execution of the calculations
+
+        # Sequential block
+        else:
+            print (f"Sequential computation of ensemble on {N_par} processors")
+            i0 = 0
+            for i in range(start, stop):
+
+                # Avoid performing this calculation if already done
+                if skip_computed:
+                    if self.force_computed[i]:
+                        if compute_stress:
+                            if self.stress_computed[i]:
+                                continue
+                        else:
                             continue
-                    else:
-                        continue
 
 
-            struct = structures[i]
-            #atms = struct.get_ase_atoms()
+                struct = structures[i]
+                #atms = struct.get_ase_atoms()
 
-            # Setup the ASE calculator
-            #atms.set_calculator(ase_calculator)
+                # Setup the ASE calculator
+                #atms.set_calculator(ase_calculator)
 
 
-            # Print the status
-            if Parallel.am_i_the_master() and verbose:
-                print ("Computing configuration %d out of %d (nat = %d)" % (i+1, stop, struct.N_atoms))
-                sys.stdout.flush()
+                # Print the status
+                if Parallel.am_i_the_master() and verbose:
+                    print ("Computing configuration %d out of %d (nat = %d)" % (i+1, stop, struct.N_atoms))
+                    sys.stdout.flush()
 
-            # Avoid for errors
-            run = True
-            count_fails = 0
-            retrain_count_fails = 0
-            while run:
-                try:
-                    results = CC.calculators.get_results(ase_calculator, struct, get_stress = compute_stress)
-                    energy = results["energy"] / Rydberg # eV => Ry
-                    forces_ = results["forces"] / Rydberg
+                # Avoid for errors
+                run = True
+                count_fails = 0
+                retrain_count_fails = 0
+                while run:
+                    try:
+                        results = CC.calculators.get_results(ase_calculator, struct, get_stress = compute_stress)
+                        energy = results["energy"] / Rydberg # eV => Ry
+                        forces_ = results["forces"] / Rydberg
 
-                    if compute_stress:
-                        stress[9*i0 : 9*i0 + 9] = -results["stress"].reshape(9)* Bohr**3 / Rydberg
-                        #energy = atms.get_total_energy() / Rydberg # eV => Ry
-                        # Get energy, forces (and stress)
-                        #energy = atms.get_total_energy() / Rydberg # eV => Ry
-                        #forces_ = atms.get_forces() / Rydberg # eV / A => Ry / A
-                        #if compute_stress:
-                    #    if not stress_numerical:
-                    #        stress[9*i0 : 9*i0 + 9] = -atms.get_stress(False).reshape(9) * Bohr**3 / Rydberg  # ev/A^3 => Ry/bohr
-                    #    else:
-                    #        stress[9*i0 : 9*i0 + 9] = -ase_calculator.calculate_numerical_stress(atms, voigt = False).ravel()* Bohr**3 / Rydberg
+                        if compute_stress:
+                            stress[9*i0 : 9*i0 + 9] = -results["stress"].reshape(9)* Bohr**3 / Rydberg
+                            #energy = atms.get_total_energy() / Rydberg # eV => Ry
+                            # Get energy, forces (and stress)
+                            #energy = atms.get_total_energy() / Rydberg # eV => Ry
+                            #forces_ = atms.get_forces() / Rydberg # eV / A => Ry / A
+                            #if compute_stress:
+                        #    if not stress_numerical:
+                        #        stress[9*i0 : 9*i0 + 9] = -atms.get_stress(False).reshape(9) * Bohr**3 / Rydberg  # ev/A^3 => Ry/bohr
+                        #    else:
+                        #        stress[9*i0 : 9*i0 + 9] = -ase_calculator.calculate_numerical_stress(atms, voigt = False).ravel()* Bohr**3 / Rydberg
 
-                    # Copy into the ensemble array
-                    energies[i0] = energy
-                    forces[nat3*i0 : nat3*i0 + nat3] = forces_.reshape( nat3 )
-                    run = False
-                except Exception as e:
-                    print(f'Error in the ASE calculator: {e}')
-                    if self.retrain:
-                        print ("Retraining MTP on job %d" % i)
-                        os.system('touch set.cfg')
-                        try:
-                            train_mtp_on_cfg(self.specorder,self.mlip_run_command, self.pot_name, 
-                                self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
-                                self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, 
-                                train_local_mtps = False, pop = 'ensemble_retrain', np_ab_initio = self.np_ab_initio, min_distances = self.min_distances)
-                            retrain_count_fails = 0
-                        except:
-                            retrain_count_fails += 1
-                            if retrain_count_fails >= 5:
+                        # Copy into the ensemble array
+                        energies[i0] = energy
+                        forces[nat3*i0 : nat3*i0 + nat3] = forces_.reshape( nat3 )
+                        run = False
+                    except Exception as e:
+                        print(f'Error in the ASE calculator: {e}')
+                        if self.retrain:
+                            print ("Retraining MTP on job %d" % i)
+                            os.system('touch set.cfg')
+                            try:
+                                train_mtp_on_cfg(self.specorder,self.mlip_run_command, self.pot_name, 
+                                    self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
+                                    self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, 
+                                    train_local_mtps = False, pop = 'ensemble_retrain', np_ab_initio = self.np_ab_initio, min_distances = self.min_distances)
+                                retrain_count_fails = 0
+                            except:
+                                retrain_count_fails += 1
+                                if retrain_count_fails >= 5:
+                                    run = False
+                                    struct.save_scf("error_struct.scf")
+                                    sys.stderr.write("Error in the retrain MTP for more than 5 times\n     while computing 'error_struct.scf'")
+                                    # raise
+                                    continue
+
+                        else:
+                            print ("Rerun the job %d" % i)
+                            count_fails += 1
+                            if count_fails >= 5:
                                 run = False
                                 struct.save_scf("error_struct.scf")
-                                sys.stderr.write("Error in the retrain MTP for more than 5 times\n     while computing 'error_struct.scf'")
+                                sys.stderr.write("Error in the ASE calculator for more than 5 times\n     while computing 'error_struct.scf'")
                                 # raise
                                 continue
 
-                    else:
-                        print ("Rerun the job %d" % i)
-                        count_fails += 1
-                        if count_fails >= 5:
-                            run = False
-                            struct.save_scf("error_struct.scf")
-                            sys.stderr.write("Error in the ASE calculator for more than 5 times\n     while computing 'error_struct.scf'")
-                            # raise
-                            continue
 
 
+                i0 += 1
 
-            i0 += 1
 
-
-        self.remove_noncomputed()
+        # self.remove_noncomputed()
 
 
         # Collect all togheter
@@ -645,9 +760,60 @@ class Ensemble_MTP(Ensemble):
             self.has_stress = False
 
 
+        # if timer:
+        #     timer.execute_timed_function(self.init)
+        # else:
+        #     self.init()
 
 
+# Function for parallel execution
+def compute_structure(i,structures,stop,ase_calculator):
+    # Perform the necessary calculations for the structure
+    struct = structures[i]
 
+    # if Parallel.am_i_the_master() and verbose:
+    print ("Computing configuration %d out of %d (nat = %d)" % (i+1, stop, struct.N_atoms))
+    sys.stdout.flush()
+
+    # if skip_computed:
+    #     if self.force_computed[i]:
+    #         if compute_stress:
+    #             if self.stress_computed[i]:
+    #                 continue
+    #         else:
+    #             continue
+
+    # Avoid for errors
+    run = True
+    count_fails = 0
+    compute_stress = True
+    while run:
+        try:
+            results = CC.calculators.get_results(ase_calculator, struct, get_stress = compute_stress)
+            energy_ = results["energy"] / Rydberg # eV => Ry
+            forces_ = results["forces"] / Rydberg
+
+            if compute_stress:
+                # stress[9*i0 : 9*i0 + 9] = -results["stress"].reshape(9)* Bohr**3 / Rydberg
+                stress_ = -results["stress"].reshape(9)* Bohr**3 / Rydberg
+
+            # Copy into the ensemble array
+            # energies[i0] = energy
+            # forces[nat3*i0 : nat3*i0 + nat3] = forces_.reshape( nat3 )
+            run = False
+        except Exception as e:
+            print(f'Error in the ASE calculator: {e}')
+            # do not use active learning in the case of parallel execution
+            print ("Rerun the job %d" % i)
+            count_fails += 1
+            if count_fails >= 5:
+                run = False
+                struct.save_scf("error_struct.scf")
+                sys.stderr.write("Error in the ASE calculator for more than 5 times\n     while computing 'error_struct.scf'")
+                # raise
+                return i, None, None, None
+
+    return i, energy_, forces_, stress_
 
 
 
@@ -854,8 +1020,13 @@ Error, the specified location to save the ensemble:
 
             # Save the structure in CONTCAR (vasp) format for convenience
             current_ase_structure = self.minim.dyn.structure.get_ase_atoms()
-            ase.io.write(f'dyn_pop{pop}.CONTCAR', current_ase_structure, "vasp", direct=True, label = f'Current structure after minimization during SSCHA relaxation corresponding to dyn_pop{pop}')
-            ase.io.write('CONTCAR', current_ase_structure, "vasp", direct=True, label = f'Current structure after minimization during SSCHA relaxation corresponding to dyn_pop{pop}')
+            if ase.__version__ > '3.22.1':
+                ase.io.write(f'dyn_pop{pop}.CONTCAR', current_ase_structure, "vasp", direct=True)
+                ase.io.write('CONTCAR', current_ase_structure, "vasp", direct=True)
+            else:
+                label = f'Current structure after minimization during SSCHA relaxation corresponding to dyn_pop{pop}'
+                ase.io.write(f'dyn_pop{pop}.CONTCAR', current_ase_structure, "vasp", direct=True, label = label)
+                ase.io.write('CONTCAR', current_ase_structure, "vasp", direct=True, label = label)
 
 
             # Check if it is converged
@@ -1201,8 +1372,13 @@ Error, the specified location to save the ensemble:
 
             # Save the structure in CONTCAR (vasp) format for convenience
             current_ase_structure = self.minim.dyn.structure.get_ase_atoms()
-            ase.io.write(f'dyn_pop{pop}.CONTCAR', current_ase_structure, "vasp", direct=True, label = f'Current structure after minimization during SSCHA relaxation corresponding to dyn_pop{pop}')
-            ase.io.write('CONTCAR', current_ase_structure, "vasp", direct=True, label = f'Current structure after minimization during SSCHA relaxation corresponding to dyn_pop{pop}')
+            if ase.__version__ > '3.22.1':
+                ase.io.write(f'dyn_pop{pop}.CONTCAR', current_ase_structure, "vasp", direct=True)
+                ase.io.write('CONTCAR', current_ase_structure, "vasp", direct=True)
+            else:
+                label = f'Current structure after minimization during SSCHA relaxation corresponding to dyn_pop{pop}'
+                ase.io.write(f'dyn_pop{pop}.CONTCAR', current_ase_structure, "vasp", direct=True, label = label)
+                ase.io.write('CONTCAR', current_ase_structure, "vasp", direct=True, label = label)
 
 
             # Check if the constant volume calculation is converged
@@ -1251,10 +1427,54 @@ Error, the specified location to save the ensemble:
 
 """ Helping functions """
 
+def replace_bool_values(data):
+    if isinstance(data, dict):
+        return {k: replace_bool_values(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [replace_bool_values(item) for item in data]
+    elif isinstance(data, str):
+        data_lower = data.lower()
+        if data_lower == "true":
+            return ".true."
+        elif data_lower == "false":
+            return ".false."
+        else:
+            return data
+    else:
+        return data
 
-def train_mtp_on_cfg(specorder, mlip_run_command, pot_name, 
-                    ab_initio_calculator, ab_initio_parameters, ab_initio_run_command,
-                    ab_initio_kresol, ab_initio_pseudos, ab_initio_cluster,
+
+def set_vasp_calculator(ab_initio_ase_atoms, ab_initio_parameters,ab_initio_kresol,ab_initio_dir,ab_initio_run_command,ab_initio_pseudos):
+    k_points = calc_ngkpt(ab_initio_ase_atoms.cell.reciprocal(),ab_initio_kresol)
+
+    os.system(f'export VASP_PP_PATH={ab_initio_pseudos}')
+
+    ab_initio_parameters_ase = {key.lower(): value for key, value in ab_initio_parameters.items()}
+
+    if ase.__version__ > '3.22.1':
+        ab_initio_parameters_ase = replace_bool_values(ab_initio_parameters_ase)
+
+    vasp_calc = Vasp(directory = ab_initio_dir,
+                     # label = 'vasp',
+                     command = ab_initio_run_command,
+                     # txt = 'vasp.out',
+                     pp = "PBE",
+                     kpts = k_points,
+                     **ab_initio_parameters_ase
+                     )
+
+    return vasp_calc
+
+
+def train_mtp_on_cfg(specorder, 
+                    mlip_run_command, 
+                    pot_name, 
+                    ab_initio_calculator, 
+                    ab_initio_parameters, 
+                    ab_initio_run_command,
+                    ab_initio_kresol, 
+                    ab_initio_pseudos, 
+                    ab_initio_cluster,
                     iteration_limit = 500, 
                     energy_weight = 1.0, 
                     force_weight = 0.01,
@@ -1270,7 +1490,8 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
                     path_to_mtp_templates = None,
                     max_rmse_energy = 0.1,
                     max_rmse_forces = 1.0,
-                    max_rmse_stress = 10.0):
+                    max_rmse_stress = 10.0,
+                    **kwargs):
 
     """
     Function for training MTP with energies, forces, and stresses that are obtained from ase calculator.
@@ -1294,18 +1515,32 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
 
     """
 
+    # Passing keyword arguments to the internal parameters
+    for arg, value in kwargs.items():
+        exec(f"{arg} = {value}")
+
+
     print(f"Preparing files for (re)training MTP {pot_name}")
     # cmd_gain_cfg   = 'cat preselected.cfg* >> preselected.cfg; rm -f preselected.cfg.*'
     cmd_gain_cfg   = 'cat preselected.cfg* >> preselected.cfg'
     cmd_select_add = f'{mlip_run_command} \
-                        select_add {pot_name} set.cfg preselected.cfg selected.cfg'
-    cmd_mlip_train = f'{mlip_run_command} \
-                        train {pot_name} set.cfg \
-                        --tolerance=0.01 \
-                        --energy_weight={energy_weight} \
-                        --force_weight={force_weight} \
-                        --stress_weight={stress_weight} \
-                        --iteration_limit={iteration_limit}'
+                        select_add {pot_name} set.cfg preselected.cfg selected.cfg  >> mtp_select_add.log'
+    if 'mpirun' in mlip_run_command and __MPI__ == False:
+        cmd_mlip_train = f'{mlip_run_command} \
+                            train {pot_name} set.cfg \
+                            --tolerance=0.01 \
+                            --energy_weight={energy_weight} \
+                            --force_weight={force_weight} \
+                            --stress_weight={stress_weight} \
+                            --iteration_limit={iteration_limit} >> mtp_training.log'
+    elif 'mpirun' not in mlip_run_command and __MPI__ == False:
+        cmd_mlip_train = f'mpirun -np {np_mlp_train} {mlip_run_command} \
+                            train {pot_name} set.cfg \
+                            --tolerance=0.01 \
+                            --energy_weight={energy_weight} \
+                            --force_weight={force_weight} \
+                            --stress_weight={stress_weight} \
+                            --iteration_limit={iteration_limit} >> mtp_training.log'   
 
     if train_local_mtps:
         try:
@@ -1336,6 +1571,9 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
         return
 
     if n_cfg > 0:
+        print('Start ab initio calculations for selected configurations')
+        start_calc = datetime.now()
+
         # ab initio calculation of energies, forces, and stresses for selected structures 
         for i in range(n_cfg):
             print(f"Calculating ab initio energies and forces for configuration selected.cfg.{i}")
@@ -1383,143 +1621,13 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
 
             elif ab_initio_calculator == "VASP":
 
-                os.system(f'export VASP_PP_PATH={ab_initio_pseudos}')
-                if 'SETUPS' in ab_initio_parameters.keys():
-                    setups = ab_initio_parameters['SETUPS']  
-                elif 'setups' in ab_initio_parameters.keys():
-                    setups = ab_initio_parameters['setups']
-                else:
-                    setups = 'recommended'
-
-                if 'PREC' in ab_initio_parameters.keys():
-                    prec = ab_initio_parameters['PREC']
-                elif 'prec' in ab_initio_parameters.keys():
-                    prec = ab_initio_parameters['prec']  
-                else: 
-                    prec = 'Accurate' # Accurate setting for better forces accuracy
-
-                if 'ENCUT' in ab_initio_parameters.keys():
-                    encut = ab_initio_parameters['ENCUT']
-                elif 'encut' in ab_initio_parameters.keys():
-                    encut = ab_initio_parameters['encut']                    
-                else:
-                    encut = None
-
-                if 'EDIFF' in ab_initio_parameters.keys():
-                    ediff = ab_initio_parameters['EDIFF']
-                elif 'ediff' in ab_initio_parameters.keys():
-                    ediff = ab_initio_parameters['ediff']
-                else:
-                    ediff = 1e-4
-
-                if 'NBANDS' in ab_initio_parameters.keys():
-                    nbands = ab_initio_parameters['NBANDS']
-                elif 'nbands' in ab_initio_parameters.keys():
-                    nbands = ab_initio_parameters['nbands']
-                else:
-                    nbands = None
-
-                if 'ALGO' in ab_initio_parameters.keys():
-                    algo = ab_initio_parameters['ALGO']
-                else:
-                    algo = 'Normal'
-
-                if 'ISMEAR' in ab_initio_parameters.keys():
-                    ismear = ab_initio_parameters['ISMEAR']
-                elif 'ismear' in ab_initio_parameters.keys():
-                    ismear = ab_initio_parameters['ismear']
-                else:
-                    ismear = 1
-
-                if 'SIGMA' in ab_initio_parameters.keys():
-                    sigma = ab_initio_parameters['SIGMA']
-                elif 'sigma' in ab_initio_parameters.keys():
-                    sigma = ab_initio_parameters['sigma']
-                else:
-                    sigma = 0.05
-
-                if 'NELM' in ab_initio_parameters.keys():
-                    nelm = ab_initio_parameters['NELM']
-                elif 'nelm' in ab_initio_parameters.keys():
-                    nelm = ab_initio_parameters['nelm']
-                else:
-                    nelm = 500
-
-                if 'ISTART' in ab_initio_parameters.keys():
-                    istart = ab_initio_parameters['ISTART']
-                elif 'istart' in ab_initio_parameters.keys():
-                    istart = ab_initio_parameters['istart']
-                else:
-                    istart = 0
-
-                if 'LCHARG' in ab_initio_parameters.keys():
-                    lcharg = ab_initio_parameters['LCHARG']
-                elif 'lcharg' in ab_initio_parameters.keys():
-                    lcharg = ab_initio_parameters['lcharg']
-                else:
-                    lcharg = 'FALSE'
-
-                if 'LWAVE' in ab_initio_parameters.keys():
-                    lwave = ab_initio_parameters['LWAVE']
-                elif 'lwave' in ab_initio_parameters.keys():
-                    lwave = ab_initio_parameters['lwave']
-                else:
-                    lwave = 'FALSE'
-
-                if 'LREAL' in ab_initio_parameters.keys():
-                    lreal = ab_initio_parameters['LREAL']
-                elif 'lreal' in ab_initio_parameters.keys():
-                    lreal = ab_initio_parameters['lreal']                    
-                else:
-                    lreal = 'Auto'
-
-                if 'ISPIN' in ab_initio_parameters.keys():
-                    ispin = ab_initio_parameters['ISPIN']
-                elif 'ispin' in ab_initio_parameters.keys():
-                    ispin = ab_initio_parameters['ispin']
-                else:
-                    ispin = 1
-
-                if 'NCORE' in ab_initio_parameters.keys():
-                    ncore = ab_initio_parameters['NCORE']
-                elif 'ncore' in ab_initio_parameters.keys():
-                    ncore = ab_initio_parameters['ncore']
-                else:
-                    ncore = 1
-
-                NATOMS = ab_initio_ase_atoms.get_number_of_atoms()
-                if 'MAGMOM' in ab_initio_parameters.keys():
-                    magmom = ab_initio_parameters['MAGMOM']
-                elif 'magmom' in ab_initio_parameters.keys():
-                    magmom = ab_initio_parameters['magmom']
-                else:
-                    magmom = [1.0 for i in range(NATOMS)]
-
-
-                ab_initio_calc = Vasp(directory = ab_initio_dir,
-                                      label = 'vasp',
-                                      command = ab_initio_run_command,
-                                      setups = setups,
-                                      txt = 'vasp.out',
-                                      pp = "PBE",
-                                      kpts = k_points,
-                                      prec = prec,
-                                      encut = encut,
-                                      ediff = ediff,
-                                      nbands = nbands,
-                                      algo = algo,
-                                      ismear = ismear,
-                                      sigma = sigma,
-                                      nelm = nelm,
-                                      istart = istart,
-                                      lcharg = lcharg,
-                                      lwave = lwave,
-                                      lreal = lreal,
-                                      ispin = ispin,
-                                      magmom = magmom,
-                                      ncore = ncore,
-                                      )
                 # ab_initio_calc.set_directory(ab_initio_dir)
+                ab_initio_calc = set_vasp_calculator(ab_initio_ase_atoms,
+                                   ab_initio_parameters,
+                                   ab_initio_kresol,
+                                   ab_initio_dir, 
+                                   ab_initio_run_command,
+                                   ab_initio_pseudos)
                 in_ext  = "POSCAR"
                 out_ext = "OUTCAR"                  
                 print(ab_initio_calc.command)
@@ -1540,6 +1648,7 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
                     try:
                         ab_initio_calc.calculate(cc_struct)
                     except Exception as e:
+                        print(e)
                         print(f'Ab initio calculation for structure {i} is failed! Continuing with second structure...')
                         os.system(f'mv {ab_initio_dir} err_{ab_initio_dir}_{i}')
                         continue
@@ -1548,7 +1657,7 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
                     try:
                         ab_initio_calc.calculate(ab_initio_ase_atoms)
                     except Exception as e:
-                        # print(e.message)
+                        print(e)
                         print(f'Ab initio calculation for structure {i} is failed! Continuing with second structure...')
                         os.system(f'mv {ab_initio_dir} err_{ab_initio_dir}_{i}')
                         continue
@@ -1575,15 +1684,26 @@ def train_mtp_on_cfg(specorder, mlip_run_command, pot_name,
             os.system(f'rm -rf {ab_initio_dir}')
 
 
+        end_calc = datetime.now()
+        delta_calc = end_calc - start_calc
+        print('End ab initio calculations for selected configurations')
+        print(f'The ab initio calculations were done within {delta_calc.total_seconds()} seconds')
+        print('') 
+
         n_input_cmd = 'ls input.cfg.* | wc -l'
         n_input = int(os.popen(n_input_cmd).read().split()[0])    
         if n_input > 0: 
             os.system(f'cp set.cfg set.cfg.bak')
             os.system('cat input.cfg* >> set.cfg')
             os.system(f'cp {pot_name} {pot_name}.bak')
-            print('Start training MLIP')
+            print('Start training MTP')
+            start_train = datetime.now()
             os.system(cmd_mlip_train)
-            print('End training MLIP')
+            end_train = datetime.now()
+            delta_train = end_train - start_train
+            print('End training MTP')
+            print(f'The MTP training was done within {delta_train.total_seconds()} seconds')
+            print('') 
             if train_local_mtps:
                 os.system(f'cat input.cfg* >> all_input_pop_{str(pop)}.cfg')
                 os.system(f'cat selected.cfg* >> all_selected_pop_{str(pop)}.cfg')
@@ -1801,7 +1921,9 @@ def calc_to_cfg(calc,path_to_cfg,specorder,include_stress = False):
         f.write(' AtomData:  id type       cartes_x      cartes_y      cartes_z           fx          fy          fz\n')
 
         for i in range(N_atoms):
-            f.write(f'             {i+1:3}    {mapping[typat[i]]}       {coords[i][0]:.6f}      {coords[i][1]:.6f}      {coords[i][2]:.6f}      {forces[i][0]:.6f} {forces[i][1]:.6f} {forces[i][2]:.6f}\n')
+            f.write(f'             {i+1:3}    {mapping[typat[i]]}  \
+                 {coords[i][0]:.6f}      {coords[i][1]:.6f}      {coords[i][2]:.6f} \
+                 {forces[i][0]:.6f} {forces[i][1]:.6f} {forces[i][2]:.6f}\n')
         f.write(f' Energy\n')
         f.write(f' {energy}\n')
         if include_stress:
