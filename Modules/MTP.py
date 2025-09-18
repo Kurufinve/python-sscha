@@ -698,7 +698,10 @@ class Ensemble_MTP(Ensemble):
                                 train_mtp_on_cfg(self.specorder,self.mlip_run_command, self.pot_name, 
                                     self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
                                     self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, 
-                                    train_local_mtps = False, pop = 'ensemble_retrain', np_ab_initio = self.np_ab_initio, min_distances = self.min_distances)
+                                    train_local_mtps = False, pop = 'ensemble_retrain', np_ab_initio = self.np_ab_initio, min_distances = self.min_distances,
+                                    check_existing_mtps=self.check_existing_mtps, path_to_existing_mtps=self.path_to_existing_mtps,
+                                    level_up_mtp = self.level_up_mtp,start_mtp_level = self.start_mtp_level,max_mtp_level = self.max_mtp_level,path_to_mtp_templates = self.path_to_mtp_templates,
+                                    max_rmse_energy = self.max_rmse_energy,max_rmse_forces = self.max_rmse_forces,max_rmse_stress = self.max_rmse_stress)
                                 retrain_count_fails = 0
                             except:
                                 retrain_count_fails += 1
@@ -847,6 +850,15 @@ class SSCHA_MTP(SSCHA):
                  np_ab_initio = 1,
                  np_mlp_train = 1,
                  min_distances = None,  
+                 check_existing_mtps=False,
+                 path_to_existing_mtps='../',
+                 level_up_mtp=False,
+                 start_mtp_level=8,
+                 max_mtp_level=26,
+                 path_to_mtp_templates='../',
+                 max_rmse_energy=0.1,
+                 max_rmse_forces=1.0,
+                 max_rmse_stress=10.0,
                  **kwargs):
 
         # super().__init__(minimizer=minimizer, ase_calculator=ase_calculator, N_configs=N_configs, max_pop=max_pop,
@@ -879,6 +891,16 @@ class SSCHA_MTP(SSCHA):
         self.np_ab_initio = np_ab_initio
         self.np_mlp_train = np_mlp_train
         self.min_distances = min_distances
+        self.check_existing_mtps = check_existing_mtps
+        self.path_to_existing_mtps = path_to_existing_mtps
+        self.level_up_mtp = level_up_mtp
+        self.start_mtp_level = start_mtp_level
+        self.max_mtp_level = max_mtp_level
+        self.path_to_mtp_templates = path_to_mtp_templates
+        self.max_rmse_energy = max_rmse_energy
+        self.max_rmse_forces = max_rmse_forces
+        self.max_rmse_stress = max_rmse_stress
+
         # super().__init__(minimizer=self.minimizer, ase_calculator=self.ase_calculator, N_configs=self.N_configs, max_pop=self.max_pop,
         #          save_ensemble = self.save_ensemble, cluster = self.cluster)
 
@@ -973,7 +995,10 @@ Error, the specified location to save the ensemble:
                     os.system('touch set.cfg')
                     train_mtp_on_cfg(self.specorder,self.mlip_run_command, self.pot_name, 
                         self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
-                        self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps, pop, self.np_ab_initio, self.np_mlp_train, self.min_distances)
+                        self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps, pop, self.np_ab_initio, self.np_mlp_train, self.min_distances,
+                        check_existing_mtps=self.check_existing_mtps, path_to_existing_mtps=self.path_to_existing_mtps,
+                        level_up_mtp = self.level_up_mtp,start_mtp_level = self.start_mtp_level,max_mtp_level = self.max_mtp_level,path_to_mtp_templates = self.path_to_mtp_templates,
+                        max_rmse_energy = self.max_rmse_energy,max_rmse_forces = self.max_rmse_forces,max_rmse_stress = self.max_rmse_stress)
                 # elif not self.train_on_every_ensemble:
                 #     if pop == start_pop:
                 #         ensemble_structures = self.minim.ensemble.structures
@@ -1227,7 +1252,10 @@ Error, the specified location to save the ensemble:
                     os.system('touch set.cfg')
                     train_mtp_on_cfg(self.specorder,self.mlip_run_command, self.pot_name, 
                         self.ab_initio_calculator, self.ab_initio_parameters, self.ab_initio_run_command, self.ab_initio_kresol, self.ab_initio_pseudos, self.ab_initio_cluster, 
-                        self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps,pop, self.np_ab_initio, self.np_mlp_train, self.min_distances)
+                        self.iteration_limit, self.energy_weight, self.force_weight, self.stress_weight, self.include_stress, self.train_local_mtps,pop, self.np_ab_initio, self.np_mlp_train, self.min_distances,
+                        check_existing_mtps=self.check_existing_mtps, path_to_existing_mtps=self.path_to_existing_mtps,
+                        level_up_mtp = self.level_up_mtp,start_mtp_level = self.start_mtp_level,max_mtp_level = self.max_mtp_level,path_to_mtp_templates = self.path_to_mtp_templates,
+                        max_rmse_energy = self.max_rmse_energy,max_rmse_forces = self.max_rmse_forces,max_rmse_stress = self.max_rmse_stress)
                 # elif not self.train_on_every_ensemble:
                 #     if pop == start_pop:
                 #         ensemble_structures = self.minim.ensemble.structures
@@ -1417,13 +1445,31 @@ Error, the specified location to save the ensemble:
 
 
 
+""" MTP dictionaries """
+# mtp-level: alpha_moments_count
+level_to_amc = {2: 1, 
+             4: 2, 
+             6: 8,
+             8: 18,
+             10: 41, 
+             12: 84,
+             14: 174,
+             16: 350,
+             18: 718,
+             20: 1352,
+             22: 2621,
+             24: 4991,
+             26: 9396,
+             28: 17366}
 
+# alpha_moments_count: mtp-level
+amc_to_level = {v: k for k, v in level_to_amc.items()}
 
+# maximal mtp-level
+max_level = 28
 
-
-
-
-
+# maximal alpha_moments_count
+max_amc = 17366
 
 """ Helping functions """
 
@@ -1466,271 +1512,538 @@ def set_vasp_calculator(ab_initio_ase_atoms, ab_initio_parameters,ab_initio_kres
     return vasp_calc
 
 
-def train_mtp_on_cfg(specorder, 
-                    mlip_run_command, 
-                    pot_name, 
-                    ab_initio_calculator, 
-                    ab_initio_parameters, 
-                    ab_initio_run_command,
-                    ab_initio_kresol, 
-                    ab_initio_pseudos, 
-                    ab_initio_cluster,
-                    iteration_limit = 500, 
-                    energy_weight = 1.0, 
-                    force_weight = 0.01,
-                    stress_weight = 0.001,
-                    include_stress = False,
-                    train_local_mtps = False,
-                    pop = 0,
-                    np_ab_initio = 1,
-                    np_mlp_train = 1,
-                    min_distances = None,
-                    level_up_mtp = False,
-                    start_mtp_level = 16,
-                    path_to_mtp_templates = None,
-                    max_rmse_energy = 0.1,
-                    max_rmse_forces = 1.0,
-                    max_rmse_stress = 10.0,
-                    **kwargs):
-
+def train_mtp_on_cfg(
+    specorder=None,
+    mlip_run_command=None,
+    pot_name=None,
+    ab_initio_calculator=None,
+    ab_initio_parameters=None,
+    ab_initio_run_command=None,
+    ab_initio_kresol=None,
+    ab_initio_pseudos=None,
+    ab_initio_cluster=None,
+    iteration_limit=500,
+    energy_weight=1.0,
+    force_weight=0.01,
+    stress_weight=0.001,
+    include_stress=False,
+    train_local_mtps=False,
+    pop=0,
+    np_ab_initio=1,
+    np_mlp_train=1,
+    min_distances=None,
+    check_existing_mtps=False,
+    path_to_existing_mtps='../',
+    level_up_mtp=False,
+    start_mtp_level=10,
+    max_mtp_level=26,
+    path_to_mtp_templates='../',
+    max_rmse_energy=0.1,
+    max_rmse_forces=1.0,
+    max_rmse_stress=10.0,
+    train_new_mtp_on_existing_set=False,
+    recursive_call = False,
+    do_ab_initio_calculations=True,
+    **kwargs
+):
     """
-    Function for training MTP with energies, forces, and stresses that are obtained from ase calculator.
+    Function for training MTP with energies, forces, and stresses obtained from ASE calculator.
+    
     Parameters:
-    specorder : (list) order of species in MTP. Needed in order to avoid coincidental mixing the atom types in multicomponent systems;
-    mlip_run_command : (str) command for running mlip in the system;
-    pot_name : (str) the name of MTP that need to be trained or retrained;
-    ab_initio_calculator : (str) name of ab initio claulcator (currectly only VASP an Qe);
-    ab_initio_parameters : (dict) parameters for ab initio calculator (currectly only VASP an Qe);
-    ab_initio_run_command : (str) command for running ab initio calculator in the system;
-    ab_initio_kresol : (float) k-point resolution in electronic convergence problem;
-    ab_initio_pseudos : (str) path to ab initio pseudopotentials (needed for QE calculator);
-    ab_initio_cluster : (sscha.Cluster.Cluster) cluster object for remote submission of ab initio calculations (working with QE only);
-    iteration_limit : (int) maximum number of iterations in MTP training;
-    level_up_mtp : (bool) if True one can level up MTP if MTP of current level gives large errors after training;
-    start_mtp_level : (int) the starting level of MTP after level up;
-    path_to_mtp_templates : (str) path to the templates with new MTPs;
-    max_rmse_energy : (float) maximum RMSE for energy per atom that allowed for current MTP, if exceeded then level-up of MTP is situated;
-    max_rmse_forces : (float) maximum RMSE for forces that allowed for current MTP, if exceeded then level-up of MTP is situated;
-    max_rmse_stress : (float) maximum RMSE for stresses that allowed for current MTP, if exceeded then level-up of MTP is situated;
-
+    -----------
+    specorder : list
+        Order of species in MTP to avoid mixing atom types in multicomponent systems
+    mlip_run_command : str
+        Command for running mlip in the system
+    pot_name : str
+        Name of MTP to be trained or retrained
+    ab_initio_calculator : str
+        Name of ab initio calculator (currently only VASP and QE)
+    ab_initio_parameters : dict
+        Parameters for ab initio calculator
+    ab_initio_run_command : str
+        Command for running ab initio calculator
+    ab_initio_kresol : float
+        k-point resolution for electronic convergence
+    ab_initio_pseudos : str
+        Path to ab initio pseudopotentials (needed for QE)
+    ab_initio_cluster : sscha.Cluster.Cluster
+        Cluster object for remote submission (QE only)
+    iteration_limit : int, optional
+        Maximum number of iterations in MTP training (default: 500)
+    check_existing_mtps: bool, optional
+        Before training the MTP, check how many structures are needed for existing trained MTPs
+    path_to_existing_mtps: str, optional
+        Path to the existing MTPs which were trained earlier        
+    level_up_mtp : bool, optional
+        If True, level up MTP if current level gives large errors (default: False)
+    start_mtp_level : int, optional
+        Starting level of MTP after level up (default: 10)
+    max_mtp_level : int, optional
+        Maximal level of MTP after level up (default: 26)
+    path_to_mtp_templates : str, optional
+        Path to templates with new MTPs
+    max_rmse_energy : float, optional
+        Maximum allowed RMSE for energy per atom (default: 0.1)
+    max_rmse_forces : float, optional
+        Maximum allowed RMSE for forces (default: 1.0)
+    max_rmse_stress : float, optional
+        Maximum allowed RMSE for stresses (default: 10.0)
+    train_new_mtp_on_existing_set : bool, optional (default: False)
+        If train the MTP on existing set.cfg without selecting configurations
+    recursive_call: bool, optional (default: False)
+        If function is called inside this function
+    do_ab_initio_calculations : bool, optional (default: True)
+        If perform ab initio calculations for retraining MTP
     """
+    
+    # Process keyword arguments
+    # for arg, value in kwargs.items():
+    #     exec(f"{arg} = {value}")
 
-    # Passing keyword arguments to the internal parameters
-    for arg, value in kwargs.items():
-        exec(f"{arg} = {value}")
+    
+    # Setup commands
+    cmd_gain_cfg = 'cat preselected.cfg* >> preselected.cfg'
+    cmd_select_add = f'{mlip_run_command} select_add {pot_name} set.cfg preselected.cfg selected.cfg >> mtp_select_add.log'
+    
+    # Setup training command based on MPI
+    if 'mpirun' in mlip_run_command and not __MPI__:
+        cmd_mlip_train = f'{mlip_run_command} train {pot_name} set.cfg --tolerance=0.01 ' \
+                         f'--energy_weight={energy_weight} --force_weight={force_weight} ' \
+                         f'--stress_weight={stress_weight} --iteration_limit={iteration_limit} >> mtp_training.log'
+    elif 'mpirun' not in mlip_run_command and not __MPI__:
+        cmd_mlip_train = f'mpirun -np {np_mlp_train} {mlip_run_command} train {pot_name} set.cfg --tolerance=0.01 ' \
+                         f'--energy_weight={energy_weight} --force_weight={force_weight} ' \
+                         f'--stress_weight={stress_weight} --iteration_limit={iteration_limit} >> mtp_training.log'
 
+    if not train_new_mtp_on_existing_set:
+        print(f"Preparing files for (re)training MTP {pot_name}")
 
-    print(f"Preparing files for (re)training MTP {pot_name}")
-    # cmd_gain_cfg   = 'cat preselected.cfg* >> preselected.cfg; rm -f preselected.cfg.*'
-    cmd_gain_cfg   = 'cat preselected.cfg* >> preselected.cfg'
-    cmd_select_add = f'{mlip_run_command} \
-                        select_add {pot_name} set.cfg preselected.cfg selected.cfg  >> mtp_select_add.log'
-    if 'mpirun' in mlip_run_command and __MPI__ == False:
-        cmd_mlip_train = f'{mlip_run_command} \
-                            train {pot_name} set.cfg \
-                            --tolerance=0.01 \
-                            --energy_weight={energy_weight} \
-                            --force_weight={force_weight} \
-                            --stress_weight={stress_weight} \
-                            --iteration_limit={iteration_limit} >> mtp_training.log'
-    elif 'mpirun' not in mlip_run_command and __MPI__ == False:
-        cmd_mlip_train = f'mpirun -np {np_mlp_train} {mlip_run_command} \
-                            train {pot_name} set.cfg \
-                            --tolerance=0.01 \
-                            --energy_weight={energy_weight} \
-                            --force_weight={force_weight} \
-                            --stress_weight={stress_weight} \
-                            --iteration_limit={iteration_limit} >> mtp_training.log'   
+        # Backup potential if training local MTPs
+        if train_local_mtps:
+            try:
+                os.system(f'cp {pot_name}.bak {pot_name}')
+            except:
+                pass
 
-    if train_local_mtps:
+        # Combine preselected configurations
         try:
-            os.system(f'cp {pot_name}.bak {pot_name}')
+            os.system(cmd_gain_cfg)
         except:
             pass
 
+        # Select structures with MaxVol algorithm
+        os.system(cmd_select_add)
 
-    try:
-        os.system(cmd_gain_cfg)
-    except:
-        pass
-    # os.system('pwd')
+        selected_name="selected.cfg"
+        # Get number of selected structures
+        n_cfg = _get_selected_config_count(selected_name)
+        print(f"There are {n_cfg} configurations that need to be added to the training set")
 
-    # selection of structures with MaxVol algorithm
-    os.system(cmd_select_add)
+        pot_label_add = ''
+        if check_existing_mtps and not recursive_call:
+            find_better_mtp = False
+            n_cfg_orig = n_cfg
+            mtp_files, training_sets, mtp_labels = find_mtp_files_with_training_sets(path_to_existing_mtps)
+            for mtp_file, training_set, mtp_label in zip(mtp_files,training_sets,mtp_labels):
+                if training_set != '':
+                    cmd_select_add_exist = f'{mlip_run_command} select_add {mtp_file} \
+                        {training_set} preselected.cfg selected_{mtp_label}.cfg \
+                        > mtp_select_add_{mtp_label}.log'
+                    os.system(cmd_select_add_exist)
+                    n_cfg_exist = _get_selected_config_count(f"selected_{mtp_label}.cfg")
 
-    # gaining the number of selected structures
-    n_cfg_cmd = 'grep "BEGIN" selected.cfg | wc -l'
-    n_cfg = int(os.popen(n_cfg_cmd).read().split()[0])
-    print(f"There are {n_cfg} configurations that need to be added to the training set") 
+                    print(f"There are {n_cfg_exist} configurations that need to be added to the training set for existing mtp from {mtp_file}")
 
-    # spliting the file with selected structures on n_cfg files 
-    try:
-        split_cfg('selected.cfg')
-    except FileNotFoundError:
-        print('There are no new structures that need to be added to the train set!')
-        return
+                    if n_cfg_exist < n_cfg:
+                        find_better_mtp = True
+                        exist_pot = mtp_file
+                        exist_set = training_set
+                        pot_label_add = mtp_label
+                        n_cfg = n_cfg_exist
 
-    if n_cfg > 0:
-        print('Start ab initio calculations for selected configurations')
-        start_calc = datetime.now()
-
-        # ab initio calculation of energies, forces, and stresses for selected structures 
-        for i in range(n_cfg):
-            print(f"Calculating ab initio energies and forces for configuration selected.cfg.{i}")
-            # cmd_convert  = f'{mlip_run_command} {path_to_mlip} convert --output_format=poscar sampled.cfg.{i} {i}.POSCAR' 
-            # os.system(cmd_convert)
-            # ab_initio_dir = f'ab_initio_dir_{i}'+ '_' + str(datetime.now()).replace(' ','_').replace(':','-')
-            ab_initio_dir = f'ab_initio_dir'
-            cmd_mkdir_abinitio = f'mkdir {ab_initio_dir}'
-            if not os.path.exists(ab_initio_dir): 
-                os.system(cmd_mkdir_abinitio)
-            else: 
-                print(f'Ab initio directory {ab_initio_dir} already exists!')
-            
-            ab_initio_ase_atoms = one_cfg_to_atoms(f'selected.cfg.{i}',specorder) 
-
-            cc_struct = CC.Structure.Structure()
-            cc_struct.generate_from_ase_atoms(ab_initio_ase_atoms)
-
-            if min_distances != None:
-                # skiping
-                if not are_ion_distances_good(cc_struct, min_distances):
-                    print(f'Skipping structure selected.cfg.{i} for training as it does not satisfy min_distances constraints')
-                    os.system(f'mv selected.cfg.{i} pop{pop}.bad.selected.cfg.{i}')
-                    continue
-                # else:
-
-            k_points = calc_ngkpt(ab_initio_ase_atoms.cell.reciprocal(),ab_initio_kresol)
-            print(f'KPOINTS: {k_points}')
-
-            ### Seting up ab initio calculations ###
-            is_converged = False
-
-            if ab_initio_calculator == "QE":
-                
-                ab_initio_calc = Espresso(pseudopotentials = ab_initio_pseudos,
-                                            input_data = ab_initio_parameters,
-                                            kpts = k_points,
-                                            command = ab_initio_run_command,
-                                            koffset  = (0,0,0))
-                ab_initio_calc.set_directory(ab_initio_dir)
-                in_ext  = ".pwi"
-                out_ext = ".pwo"   
-
-                print(ab_initio_calc.command)
-
-            elif ab_initio_calculator == "VASP":
-
-                # ab_initio_calc.set_directory(ab_initio_dir)
-                ab_initio_calc = set_vasp_calculator(ab_initio_ase_atoms,
-                                   ab_initio_parameters,
-                                   ab_initio_kresol,
-                                   ab_initio_dir, 
-                                   ab_initio_run_command,
-                                   ab_initio_pseudos)
-                in_ext  = "POSCAR"
-                out_ext = "OUTCAR"                  
-                print(ab_initio_calc.command)
-
-
-            ### Starting Ab initio calculations ###
-            if ab_initio_cluster != None:
-                print("Using HPC for ab initio calculations")
-                ab_initio_cluster.run_atoms(ab_initio_calc, ab_initio_ase_atoms, in_extension = in_ext, out_extension = out_ext)
-                ab_initio_cluster.read_results(ab_initio_calc, ab_initio_cluster.label)
-
-            elif ab_initio_cluster == None:
-
-                if isinstance(ab_initio_calc, cellconstructor.calculators.Calculator):
-                    cc_struct = CC.Structure.Structure()
-                    cc_struct.generate_from_ase_atoms(ab_initio_ase_atoms)
-                    ab_initio_calc.set_label("ESP")
-                    try:
-                        ab_initio_calc.calculate(cc_struct)
-                    except Exception as e:
-                        print(e)
-                        print(f'Ab initio calculation for structure {i} is failed! Continuing with second structure...')
-                        os.system(f'mv {ab_initio_dir} err_{ab_initio_dir}_{i}')
-                        continue
-                        
-                elif isinstance(ab_initio_calc, ase.calculators.calculator.Calculator):
-                    try:
-                        ab_initio_calc.calculate(ab_initio_ase_atoms)
-                    except Exception as e:
-                        print(e)
-                        print(f'Ab initio calculation for structure {i} is failed! Continuing with second structure...')
-                        os.system(f'mv {ab_initio_dir} err_{ab_initio_dir}_{i}')
-                        continue
-
-                else:
-                    raise(NotImplementedError)
-
-
-            ### Processing results of ab initio calculations
-            # checking if calculation is converged
-            if ab_initio_calculator == "QE":
-                results = ab_initio_calc.results
-                if results != None:
-                    is_converged = True
-            elif ab_initio_calculator == "VASP":
-                is_converged = ab_initio_calc.read_convergence()
-            
-            # writing cfg file for MLIP
-            if is_converged:
-                calc_to_cfg(ab_initio_calc,f'input.cfg.{i}',specorder, include_stress)
+            if find_better_mtp:
+                selected_name=f"selected_{pot_label_add}.cfg"
+                os.system(f'mv {pot_name} {pot_name}.bak')
+                os.system(f'cp {exist_pot} {pot_name}')
+                os.system(f'cp {exist_set} set.cfg')
+                os.system(f'cat mtp_select_add_{pot_label_add}.log >> mtp_select_add.log')
+                os.system(f'rm -f mtp_select_add_*.log')
+                print(f"The original {pot_name} potential was replaced by {exist_pot} potential because it require {n_cfg} configuration(s) for its retraining")
+                print(f"In contrast, the original {pot_name} potential required {n_cfg_orig} configurations for its retraining")
             else:
-                print(f'Ab initio calculation for structure {i} is not converged! Continuing with second structure...')
+                print(f"The original {pot_name} potential required {n_cfg_orig} configuration(s) for its retraining")
+                print(f"There is no MTP in {path_to_existing_mtps} folder that required less than {n_cfg_orig} configuration(s) for its retraining")
 
-            os.system(f'rm -rf {ab_initio_dir}')
 
 
-        end_calc = datetime.now()
-        delta_calc = end_calc - start_calc
-        print('End ab initio calculations for selected configurations')
-        print(f'The ab initio calculations were done within {delta_calc.total_seconds()} seconds')
-        print('') 
 
-        n_input_cmd = 'ls input.cfg.* | wc -l'
-        n_input = int(os.popen(n_input_cmd).read().split()[0])    
-        if n_input > 0: 
-            os.system(f'cp set.cfg set.cfg.bak')
-            os.system('cat input.cfg* >> set.cfg')
-            os.system(f'cp {pot_name} {pot_name}.bak')
-            print('Start training MTP')
-            start_train = datetime.now()
-            os.system(cmd_mlip_train)
-            end_train = datetime.now()
-            delta_train = end_train - start_train
-            print('End training MTP')
-            print(f'The MTP training was done within {delta_train.total_seconds()} seconds')
-            print('') 
-            if train_local_mtps:
-                os.system(f'cat input.cfg* >> all_input_pop_{str(pop)}.cfg')
-                os.system(f'cat selected.cfg* >> all_selected_pop_{str(pop)}.cfg')
-                os.system(f'mv set.cfg set_pop_{str(pop)}.cfg')
-                os.system(f'cp {pot_name} {pot_name}.pop_{str(pop)}')
-                # os.system(f'cp {pot_name}.bak {pot_name}')
-                os.system('rm -f input.cfg*')
-                os.system('rm -f selected.cfg*')
-                os.system('rm -f preselected.cfg*')
-            else:
-                os.system(f'cat input.cfg* >> all_input.cfg')
-                os.system(f'cat selected.cfg* >> all_selected.cfg')
-                os.system('rm -f input.cfg*')
-                os.system('rm -f selected.cfg*')
-                os.system('rm -f preselected.cfg*')
-        else:
-            print('No new configurations were calculated! Training will be ommited this time!')
+        # Split selected configurations into individual files
+        try:
+            split_cfg(selected_name)
+        except FileNotFoundError:
+            print('There are no new structures that need to be added to the train set!')
+            # return
+
+        if n_cfg > 0:
+            _process_selected_configurations(
+                n_cfg, specorder, pot_name, pop, min_distances,
+                ab_initio_calculator, ab_initio_parameters, ab_initio_run_command,
+                ab_initio_kresol, ab_initio_pseudos, ab_initio_cluster,
+                include_stress, cmd_mlip_train, train_local_mtps, selected_name, 
+                do_ab_initio_calculations
+            )
+            _finalize_training(pot_name, pop, cmd_mlip_train, train_local_mtps, train_new_mtp_on_existing_set)
+
+        elif n_cfg == 0:
+            # rare or even impossible case
+            if level_up_mtp:
+                print('No new configurations need to be added to the training set! Training leveled up MTP on existing set!')
+                _finalize_training(pot_name, pop, cmd_mlip_train, train_local_mtps, train_new_mtp_on_existing_set)
+            # usual case
+            elif not level_up_mtp:
+                print('No new configurations need to be added to the training set! Training will be omitted this time!')
+                _cleanup_temporary_files()
+                return
+
+        if check_existing_mtps and not recursive_call:
+            if find_better_mtp:
+                # update exisitng potential
+                os.system(f'cp {pot_name} {exist_pot}')
+                os.system(f'cp set.cfg {exist_set}')
+
     else:
-        print('No new configurations are need to be added into the training set! Training will be ommited this time!')
-        try:
-            os.system('rm -f input.cfg*')
-            os.system('rm -f selected.cfg*')
-            os.system('rm -f preselected.cfg*')
-        except:
-            pass
+        print(f"Training MTP {pot_name} on the existing set")
 
-    return  
+        _finalize_training(pot_name, pop, cmd_mlip_train, train_local_mtps, train_new_mtp_on_existing_set)
+
+    if level_up_mtp and not recursive_call:
+
+        if not os.path.exists('mtp_training.log'):
+            get_errors_cmd = f'{mlip_run_command} check_errors {pot_name} set.cfg --log=mtp_errors > mtp_training.log'
+            os.system(get_errors_cmd)
+
+        rmse_energy, rmse_forces, rmse_stress = parse_mtp_log('mtp_training.log')
+        if any([rmse_energy > max_rmse_energy, rmse_forces > max_rmse_forces, rmse_stress > max_rmse_stress]):
+            print('The trained MTP does not satisfy the required accuracy!')
+            print(f'rmse_energy = {rmse_energy} {">" if rmse_energy > max_rmse_energy else ("=" if rmse_energy == max_rmse_energy else "<")} max_rmse_energy = {max_rmse_energy}')
+            print(f'rmse_energy = {rmse_forces} {">" if rmse_forces > max_rmse_forces else ("=" if rmse_energy == max_rmse_forces else "<")} max_rmse_forces = {max_rmse_forces}')
+            print(f'rmse_energy = {rmse_stress} {">" if rmse_stress > max_rmse_stress else ("=" if rmse_stress == max_rmse_stress else "<")} max_rmse_stress = {max_rmse_stress}')
+            # get alpha_moments_count value of current MTP
+            current_amc = get_alpha_moments_count(pot_name)
+            # get the level of current MTP by alpha_moments_count value
+            current_lvl = get_mtp_level_by_alpha_moments_count(current_amc)
+            print(f'The level of current MTP is {current_lvl}')
+
+
+
+            # checking if the MTP not of maximal possible level stored in the max_level variable
+            # if current_lvl >= max_level:
+            #     print(f'This is a maximal possible level of MTP ({current_lvl} == {max_level}). Further adjusting of MTP by increasing its level is not possible!')
+            #     return
+
+            # checking if the MTP not of maximal possible level defuned by user
+            if current_lvl >= max_mtp_level:
+                print(f'This is a maximal user defined level of MTP ({current_lvl} == {max_mtp_level}). Further adjusting of MTP by increasing its level is not possible!')
+                return
+
+            else:
+                mtp_templates_list, amc_list = sort_mtps_by_alpha_moments(find_mtp_files(path_to_mtp_templates))
+
+                # checking if the MTP not of maximal possible level available in templates folder
+                max_level_in_templates = max([get_mtp_level_by_alpha_moments_count(amc) for amc in amc_list])
+
+                if current_lvl >= max_level_in_templates:
+                    print(f'The maximal possible level of MTP available in the templates folder ({max_level_in_templates}) is equal or lower than current level of MTP ({current_lvl})!')
+                    print(f'To adjust further the MTP by increasing its level, please point out another folder with MTP templates!')
+                    return
+
+
+                # getting the species count in current mtp
+                n_species = get_mtp_species_count(pot_name)
+
+                for mtp_template, new_amc in zip(mtp_templates_list, amc_list):
+                    new_lvl = get_mtp_level_by_alpha_moments_count(new_amc)
+                    # checking if new mtp level is higher than current mtp level and not lower than start_mtp_level 
+                    if (new_lvl > current_lvl) and (new_lvl >= start_mtp_level) and (new_lvl <= max_mtp_level):
+                        print(f'Taking the MTP template of {new_lvl} level from the directory: {path_to_mtp_templates}')
+                        # renaming the current mtp filename 
+                        os.system(f'mv {pot_name} {pot_name}.inaccurate.level_{current_lvl}')
+                        # copying the new mtp template 
+                        os.system(f'cp {mtp_template} {pot_name}')
+                        # changing the number of species in copied MTP template
+                        change_mtp_species_count(pot_name,n_species)
+
+                        train_mtp_on_cfg(specorder=specorder, 
+                            mlip_run_command=mlip_run_command, 
+                            pot_name=pot_name, 
+                            ab_initio_calculator = ab_initio_calculator,
+                            ab_initio_parameters = ab_initio_parameters,
+                            ab_initio_run_command = ab_initio_run_command,
+                            ab_initio_kresol = ab_initio_kresol,
+                            ab_initio_pseudos = ab_initio_pseudos,
+                            ab_initio_cluster = ab_initio_cluster,
+                            iteration_limit = iteration_limit,
+                            energy_weight = energy_weight,
+                            force_weight = force_weight,
+                            stress_weight = stress_weight,
+                            include_stress = include_stress,
+                            train_local_mtps = train_local_mtps,
+                            pop = pop,
+                            np_ab_initio = np_ab_initio,
+                            np_mlp_train = np_mlp_train,
+                            min_distances = min_distances,
+                            level_up_mtp = level_up_mtp,
+                            # start_mtp_level = start_mtp_level,
+                            # path_to_mtp_templates = path_to_mtp_templates,
+                            # max_rmse_energy = max_rmse_energy,
+                            # max_rmse_forces = max_rmse_forces,
+                            # max_rmse_stress = max_rmse_stress,
+                            train_new_mtp_on_existing_set=train_new_mtp_on_existing_set,
+                            recursive_call=True,
+                            do_ab_initio_calculations=do_ab_initio_calculations)                            
+
+
+                        # training MTP of higher level on exisitng dataset
+                        # _finalize_training(pot_name, pop, cmd_mlip_train, train_local_mtps, train_new_mtp_on_existing_set)
+                        
+                        rmse_energy_new, rmse_forces_new, rmse_stress_new = parse_mtp_log('mtp_training.log')
+                        if any([rmse_energy_new > max_rmse_energy, rmse_forces_new > max_rmse_forces, rmse_stress_new > max_rmse_stress]):
+                            print('The trained MTP does not satisfy the required accuracy!')
+                            print(f'rmse_energy = {rmse_energy_new} {">" if rmse_energy_new > max_rmse_energy else ("=" if rmse_energy_new == max_rmse_energy else "<")} max_rmse_energy = {max_rmse_energy}')
+                            print(f'rmse_energy = {rmse_forces_new} {">" if rmse_forces_new > max_rmse_forces else ("=" if rmse_energy_new == max_rmse_forces else "<")} max_rmse_forces = {max_rmse_forces}')
+                            print(f'rmse_energy = {rmse_stress_new} {">" if rmse_stress_new > max_rmse_stress else ("=" if rmse_stress_new == max_rmse_stress else "<")} max_rmse_stress = {max_rmse_stress}')
+                            # get alpha_moments_count value of current MTP
+                            current_amc = get_alpha_moments_count(pot_name)
+                            # get the level of current MTP by alpha_moments_count value
+                            current_lvl = get_mtp_level_by_alpha_moments_count(current_amc)
+                            print(f'The level of current leveled-up MTP is {current_lvl}')
+                            continue
+                        else:
+                            print('Congratulations! The new leveled-up trained MTP does satisfy the required accuracy!')
+                            print(f'rmse_energy_new = {rmse_energy_new} < max_rmse_energy = {max_rmse_energy}')
+                            print(f'rmse_forces_new = {rmse_forces_new} < max_rmse_forces = {max_rmse_forces}')
+                            print(f'rmse_stress_new = {rmse_stress_new} < max_rmse_stress = {max_rmse_stress}') 
+                            break
+
+                            _cleanup_temporary_files()
+
+                            return   
+                    else:
+                        print(f'The maximal mtp level {current_lvl} is reached!')                        
+            
+        else:
+            print('Congratulations! The trained MTP does satisfy the required accuracy!')
+            print(f'rmse_energy = {rmse_energy} < max_rmse_energy = {max_rmse_energy}')
+            print(f'rmse_forces = {rmse_forces} < max_rmse_forces = {max_rmse_forces}')
+            print(f'rmse_stress = {rmse_stress} < max_rmse_stress = {max_rmse_stress}')
+
+            _cleanup_temporary_files()
+
+            return
+
+    if level_up_mtp and recursive_call:
+        os.system('rm -f input.cfg* selected*.cfg*')
+    else:
+        _cleanup_temporary_files()
+
+    return
+
+def _get_selected_config_count(selected_name="selected.cfg"):
+    """Get the number of selected configurations."""
+    n_cfg_cmd = f'grep "BEGIN" {selected_name} | wc -l'
+    return int(os.popen(n_cfg_cmd).read().split()[0])
+
+def _process_selected_configurations(
+    n_cfg, specorder, pot_name, pop, min_distances,
+    ab_initio_calculator, ab_initio_parameters, ab_initio_run_command,
+    ab_initio_kresol, ab_initio_pseudos, ab_initio_cluster,
+    include_stress, cmd_mlip_train, train_local_mtps, selected_name="selected.cfg",
+    do_ab_initio_calculations=True    
+):
+    """Process all selected configurations for training."""
+    print('Start ab initio calculations for selected configurations')
+    start_calc = datetime.now()
+
+    for i in range(n_cfg):
+        _process_single_configuration(
+            i, specorder, min_distances, pop,
+            ab_initio_calculator, ab_initio_parameters, ab_initio_run_command,
+            ab_initio_kresol, ab_initio_pseudos, ab_initio_cluster,
+            include_stress, selected_name, do_ab_initio_calculations
+        )
+
+    end_calc = datetime.now()
+    delta_calc = end_calc - start_calc
+    print('End ab initio calculations for selected configurations')
+    print(f'The ab initio calculations were done within {delta_calc.total_seconds()} seconds\n')
+
+    # _finalize_training(pot_name, pop, cmd_mlip_train, train_local_mtps)
+
+def _process_single_configuration(
+    i, specorder, min_distances, pop,
+    ab_initio_calculator, ab_initio_parameters, ab_initio_run_command,
+    ab_initio_kresol, ab_initio_pseudos, ab_initio_cluster,
+    include_stress, selected_name="selected.cfg", 
+    do_ab_initio_calculations=True
+):
+
+    if do_ab_initio_calculations:
+        """Process a single configuration for ab initio calculation."""
+        print(f"Calculating ab initio energies and forces for configuration selected.cfg.{i}")
+        
+        # Create ab initio directory
+        ab_initio_dir = 'ab_initio_dir'
+        if not os.path.exists(ab_initio_dir):
+            os.makedirs(ab_initio_dir, exist_ok=True)
+        else:
+            print(f'Ab initio directory {ab_initio_dir} already exists!')
+        
+        # Convert configuration to ASE atoms
+        ab_initio_ase_atoms = one_cfg_to_atoms(f'{selected_name}.{i}', specorder)
+        cc_struct = CC.Structure.Structure()
+        cc_struct.generate_from_ase_atoms(ab_initio_ase_atoms)
+
+        # Check minimum distances if specified
+        if min_distances and not are_ion_distances_good(cc_struct, min_distances):
+            print(f'Skipping structure {selected_name}.{i} for training as it does not satisfy min_distances constraints')
+            os.system(f'mv {selected_name}.{i} pop{pop}.bad.{selected_name}.{i}')
+            return
+
+        # Calculate k-points
+        k_points = calc_ngkpt(ab_initio_ase_atoms.cell.reciprocal(), ab_initio_kresol)
+        print(f'KPOINTS: {k_points}')
+
+        # Setup ab initio calculator
+        if ab_initio_calculator == "QE":
+            ab_initio_calc = Espresso(
+                pseudopotentials=ab_initio_pseudos,
+                input_data=ab_initio_parameters,
+                kpts=k_points,
+                command=ab_initio_run_command,
+                koffset=(0, 0, 0))
+            ab_initio_calc.set_directory(ab_initio_dir)
+            in_ext, out_ext = ".pwi", ".pwo"
+        elif ab_initio_calculator == "VASP":
+            ab_initio_calc = set_vasp_calculator(
+                ab_initio_ase_atoms,
+                ab_initio_parameters,
+                ab_initio_kresol,
+                ab_initio_dir,
+                ab_initio_run_command,
+                ab_initio_pseudos)
+            in_ext, out_ext = "POSCAR", "OUTCAR"
+        else:
+            raise ValueError(f"Unsupported calculator: {ab_initio_calculator}")
+
+        print(ab_initio_calc.command)
+
+        # Run ab initio calculation
+        _run_ab_initio_calculation(
+            ab_initio_calc, ab_initio_ase_atoms, ab_initio_cluster,
+            in_ext, out_ext, ab_initio_dir, i
+        )
+
+        # Process results
+        is_converged = _check_convergence(ab_initio_calculator, ab_initio_calc)
+        if is_converged:
+            calc_to_cfg(ab_initio_calc, f'input.cfg.{i}', specorder, include_stress)
+        else:
+            print(f'Ab initio calculation for structure {i} is not converged! Continuing with next structure...')
+
+        os.system(f'rm -rf {ab_initio_dir}')
+
+    else:
+        print(f"Copying configuration selected.cfg.{i} to input.cfg.{i}")
+        os.system(f'cp {selected_name}.{i} input.cfg.{i}')
+
+    return
+
+def _run_ab_initio_calculation(calc, atoms, cluster, in_ext, out_ext, dir_name, i):
+    """Run the ab initio calculation either locally or on cluster."""
+    if cluster is not None:
+        print("Using HPC for ab initio calculations")
+        cluster.run_atoms(calc, atoms, in_extension=in_ext, out_extension=out_ext)
+        cluster.read_results(calc, cluster.label)
+    else:
+        try:
+            if isinstance(calc, CC.calculators.Calculator):
+                struct = CC.Structure.Structure()
+                struct.generate_from_ase_atoms(atoms)
+                calc.set_label("ESP")
+                calc.calculate(struct)
+            elif isinstance(calc, ase.calculators.calculator.Calculator):
+                calc.calculate(atoms)
+            else:
+                raise NotImplementedError("Unsupported calculator type")
+        except Exception as e:
+            print(e)
+            print(f'Ab initio calculation for structure {i} failed! Continuing with next structure...')
+            os.system(f'mv {dir_name} err_{dir_name}_{i}')
+            raise
+
+def _check_convergence(calculator_type, calculator):
+    """Check if the calculation converged."""
+    if calculator_type.lower() == "qe":
+        return calculator.results is not None
+    elif calculator_type.lower() == "vasp":
+        return calculator.read_convergence()
+    return False
+
+def _finalize_training(pot_name, pop, cmd_mlip_train, train_local_mtps, train_new_mtp_on_existing_set=False):
+    """Finalize the training process."""
+    if not train_new_mtp_on_existing_set:
+        n_input = _get_input_config_count()
+        if n_input == 0:
+            print('No new configurations were calculated! Training will be omitted this time!')
+            return
+        elif n_input > 0:
+            # Prepare files if not training on existing set and there are new configurations
+            os.system(f'cp set.cfg set.cfg.bak.pop_{pop}')
+            os.system('cat input.cfg* >> set.cfg')
+
+    os.system(f'cp {pot_name} {pot_name}.bak')
+    
+    # Execute training
+    print('Start training MTP')
+    start_train = datetime.now()
+    os.system(cmd_mlip_train)
+    end_train = datetime.now()
+    delta_train = end_train - start_train
+    print('End training MTP')
+    print(f'The MTP training was done within {delta_train.total_seconds()} seconds\n')
+    
+    _save_training_results(pot_name, pop, train_local_mtps)
+    return
+
+def _get_input_config_count():
+    """Get the number of input configurations."""
+    n_input_cmd = 'ls input.cfg.* | wc -l'
+    return int(os.popen(n_input_cmd).read().split()[0])
+
+def _save_training_results(pot_name, pop, train_local_mtps):
+    """Save the training results and clean up temporary files."""
+    # if train_local_mtps:
+    #     os.system(f'cat input.cfg* >> all_input_pop_{pop}.cfg')
+    #     os.system(f'cat selected.cfg* >> all_selected_pop_{pop}.cfg')
+    #     os.system(f'mv set.cfg set_pop_{pop}.cfg')
+    #     os.system(f'cp {pot_name} {pot_name}.pop_{pop}')
+    # else:
+    #     os.system(f'cat input.cfg* >> all_input.cfg')
+    #     os.system(f'cat selected.cfg* >> all_selected.cfg')
+
+    os.system(f'cat input.cfg* >> all_input_pop_{pop}.cfg')
+    os.system(f'cat selected.cfg* >> all_selected_pop_{pop}.cfg')
+    os.system(f'cp {pot_name} {pot_name}.pop_{pop}')    
+    if train_local_mtps:
+        os.system(f'mv set.cfg set_pop_{pop}.cfg')
+
+    # _cleanup_temporary_files()
+
+def _cleanup_temporary_files():
+    """Clean up temporary files."""
+    os.system('rm -f input.cfg* selected*.cfg* preselected.cfg*')
+
 
 def ase_structures_list_to_cfg(ase_structures_list,path_to_cfg,specorder):
 
@@ -2061,3 +2374,326 @@ def atoms_too_close(atoms, bl, use_tags=False):
                 return True
 
     return False
+
+
+def is_binary(filepath):
+    """Checks if the file contains null bytes (a sign of binary data)."""
+    with open(filepath, 'rb') as f:
+        return b'\x00' in f.read(1024)  # Check first 1024 bytes
+
+def find_mtp_files(folder_path):
+    """
+    Finds files where lines 2-7 match expected keywords, even if the file later contains binary data.
+    
+    Args:
+        folder_path (str): Path to the folder to search.
+        
+    Returns:
+        list: Filenames that match the criteria.
+    """
+    expected_lines = [
+        b"version",
+        b"potential_name",
+        b"scaling",
+        b"species_count",
+        b"potential_tag",
+        b"radial_basis_type"
+    ]
+    matching_files = []
+
+    for filename in os.listdir(folder_path):
+        filepath = os.path.join(folder_path, filename)
+        if not os.path.isfile(filepath):
+            continue
+
+        try:
+            with open(filepath, 'rb') as file:
+                lines = file.read(1024).split(b'\n')
+                # Check if lines 2-7 match expected patterns
+                if len(lines) >= 7 and any(
+                    lines[i+1].startswith(expected_lines[i]) 
+                    for i in range(6)
+                ):
+                    matching_files.append(filepath)
+                        
+        except IOError:
+            continue  # Skip unreadable files
+
+    return matching_files
+
+
+def find_mtp_files_with_training_sets(folder_path):
+    """
+    Returns three lists:
+    1. Files where lines 2-7 start with specified keywords.
+    2. Files containing "BEGIN_CFG", sorted to match the first list.
+    3. Common name segments shared between matched files (e.g., "EA38" from pot_EA38.almtp and set_EA38.cfg).
+
+    Args:
+        folder_path (str): Path to the directory to search.
+
+    Returns:
+        tuple: (list_matched_lines, list_begin_cfg, list_common_names)
+    """
+    # Expected beginning of lines 2-7 (as bytes for binary reading)
+    expected_lines = [
+        b"version",
+        b"potential_name",
+        b"scaling",
+        b"species_count",
+        b"potential_tag",
+        b"radial_basis_type"
+    ]
+    
+    list_matched_lines = []
+    list_begin_cfg = []
+    list_common_names = []
+    name_to_cfg = {}  # Dictionary: common_name_segment -> cfg_file_path
+
+    # --- First pass: Find files matching lines 2-7 criteria ---
+    for filename in os.listdir(folder_path):
+        filepath = os.path.join(folder_path, filename)
+        if not os.path.isfile(filepath):
+            continue
+
+        try:
+            with open(filepath, 'rb') as file:
+                lines = file.read(1024).split(b'\n')
+                # Check if lines 2-7 match expected patterns
+                if len(lines) >= 7 and all(
+                    lines[i+1].startswith(expected_lines[i]) 
+                    for i in range(6)
+                ):
+                    list_matched_lines.append(filepath)
+        except IOError:
+            continue  # Skip unreadable files
+
+    # --- Second pass: Find files containing "BEGIN_CFG" ---
+    for filename in os.listdir(folder_path):
+        filepath = os.path.join(folder_path, filename)
+        if not os.path.isfile(filepath):
+            continue
+
+        try:
+            with open(filepath, 'rb') as file:
+                if b"BEGIN_CFG" in file.read(1024):
+                    # Extract common name segment (e.g., "EA38" from "set_EA38.cfg")
+                    common_name = os.path.splitext(filename)[0].split('_')[-1]
+                    name_to_cfg[common_name] = filepath
+        except IOError:
+            continue  # Skip unreadable files
+
+    # --- Sort lists for alignment and extract common names ---
+    # Sort by the common name segment (last part after '_')
+    list_matched_lines_sorted = sorted(
+        list_matched_lines,
+        key=lambda x: os.path.splitext(os.path.basename(x))[0].split('_')[-1]
+    )
+    
+    # Extract common name segments from matched files
+    list_common_names = [
+        os.path.splitext(os.path.basename(f))[0].split('_')[-1]
+        for f in list_matched_lines_sorted
+    ]
+    
+    # Get corresponding CFG files using common names
+    list_begin_cfg_sorted = [
+        name_to_cfg.get(common_name, "") 
+        for common_name in list_common_names
+    ]
+
+    return list_matched_lines_sorted, list_begin_cfg_sorted, list_common_names
+
+def parse_mtp_log(file_path='mtp_training.log'):
+    """
+    Parse mtp_training.log file and extract latest RMS absolute differences for:
+    - Energy per atom
+    - Forces
+    - Virial stresses (in pressure units)
+    
+    Args:
+        file_path (str): Path to mtp_training.log file
+        
+    Returns:
+        dict: Dictionary with the latest RMS values for each quantity
+    """
+    # Initialize variables to store the values
+    energy_per_atom_rms = None
+    forces_rms = None
+    virial_stresses_rms = None
+    
+    with open(file_path, 'r') as f:
+        lines = f.readlines()
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            
+            # Check for Energy per atom section
+            if "Energy per atom:" in line:
+                # Look ahead for RMS line
+                for j in range(i, min(i+10, len(lines))):
+                    if "RMS" in lines[j]:
+                        parts = lines[j].split()
+                        energy_per_atom_rms = float(parts[-1])
+                        break
+            
+            # Check for Forces section
+            elif "Forces:" in line:
+                # Look ahead for RMS line
+                for j in range(i, min(i+10, len(lines))):
+                    if "RMS" in lines[j]:
+                        parts = lines[j].split()
+                        forces_rms = float(parts[-1])
+                        break
+            
+            # Check for Virial stresses section
+            elif "Virial stresses (in pressure units):" in line:
+                # Look ahead for RMS line
+                for j in range(i, min(i+15, len(lines))):
+                    if "RMS" in lines[j]:
+                        parts = lines[j].split()
+                        virial_stresses_rms = float(parts[-1])
+                        break
+            
+            i += 1
+    
+    # return {
+    #     "energy_per_atom_rms": energy_per_atom_rms,
+    #     "forces_rms": forces_rms,
+    #     "virial_stresses_rms": virial_stresses_rms
+    # }
+    return energy_per_atom_rms, forces_rms, virial_stresses_rms
+
+def get_alpha_moments_count(file_path):
+    """
+    Searches for alpha_moments_count in a mtp file, handling both text and binary content.
+    
+    Args:
+        file_path (str): Path to the file with mtp to search
+        
+    Returns:
+        int: The value if found, None otherwise
+    """
+    search_patterns = [
+        b'alpha_moments_count',  # Binary pattern
+        'alpha_moments_count'    # Text pattern
+    ]
+    
+    def extract_value(line):
+        """Extracts integer value from a line containing the parameter"""
+        try:
+            if isinstance(line, bytes):
+                line = line.decode('ascii', errors='ignore')
+            parts = line.split('=')
+            if len(parts) > 1:
+                value = parts[1].strip().split()[0]  # Take first token after =
+                return int(value)
+        except (ValueError, AttributeError):
+            pass
+        return None
+    
+    # Try binary search first (more reliable for mixed files)
+    try:
+        with open(file_path, 'rb') as f:
+            for line in f:
+                if search_patterns[0] in line:
+                    if (value := extract_value(line)) is not None:
+                        return value
+    except IOError:
+        pass
+    
+    # Fallback to text search
+    try:
+        with open(file_path, 'r', encoding='ascii', errors='ignore') as f:
+            for line in f:
+                if search_patterns[1] in line:
+                    if (value := extract_value(line)) is not None:
+                        return value
+    except IOError:
+        pass
+    
+    return None
+
+def sort_mtps_by_alpha_moments(file_list):
+    """
+    Sorts a list of files in ascending order based on the alpha_moments_count parameter
+    extracted from each file.
+    
+    Args:
+        file_list (list): List of file paths to be sorted
+        
+    Returns:
+        tuple: (sorted_files, sorted_values) where:
+            - sorted_files: List of file paths in sorted order
+            - sorted_values: Corresponding alpha_moments_count values
+    """
+    # Create a list of tuples (file_path, parameter_value)
+    files_with_values = []
+    
+    for file_path in file_list:
+        value = get_alpha_moments_count(file_path)
+        if value is not None:
+            files_with_values.append((file_path, value))
+        else:
+            # If parameter not found, use 0 as default value
+            files_with_values.append((file_path, 0))
+    
+    # Sort by alpha_moments_count value
+    sorted_files = sorted(files_with_values, key=lambda x: x[1])
+    
+    # Separate back into two lists
+    sorted_file_list = [item[0] for item in sorted_files]
+    sorted_values = [item[1] for item in sorted_files]
+    
+    return sorted_file_list, sorted_values
+
+def get_mtp_level_by_alpha_moments_count(alpha_moments_count):
+
+    try:
+        mtp_level = amc_to_level[alpha_moments_count]
+        return mtp_level
+    except KeyError:
+        print('There is no known mtp level that match given alpha_moments_count value!')
+        return None
+
+    return None 
+
+def get_alpha_moments_count_by_mtp_level(mtp_level):
+
+    try:
+        amc = level_to_amc[mtp_level]
+        return amc
+    except KeyError:
+        print('alpha_moments_count value does not match any known mtp level!')
+        return None
+
+    return None 
+
+def get_mtp_species_count(pot_name):
+    """
+    This function returns the number of species in MTP 
+    """
+
+    result = subprocess.run(['sed', '-n', 's/species_count = //p', pot_name], capture_output=True, text=True)
+
+    species_count = int(result.stdout.strip())
+
+    return species_count
+
+def change_mtp_species_count(pot_name,new_species_count):
+    """
+    This function changes the number of species in MTP 
+    if it is larger than current number of species
+    """
+
+    result = subprocess.run(['sed', '-n', 's/species_count = //p', pot_name], capture_output=True, text=True)
+
+    species_count = int(result.stdout.strip())
+
+    # print(f'species_count: {species_count}')
+    if new_species_count > species_count:
+        os.system(f"sed -i 's/species_count = [0-9]*/species_count = {new_species_count}/' {pot_name}")
+
+
+
+    return
