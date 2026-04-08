@@ -1980,7 +1980,7 @@ def _run_ab_initio_calculation(calc, atoms, cluster, in_ext, out_ext, dir_name, 
             print(e)
             print(f'Ab initio calculation for structure {i} failed! Continuing with next structure...')
             os.system(f'mv {dir_name} err_{dir_name}_{i}')
-            raise
+            pass
 
 def _check_convergence(calculator_type, calculator):
     """Check if the calculation converged."""
