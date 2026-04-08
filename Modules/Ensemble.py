@@ -1439,7 +1439,7 @@ Error, the following stress files are missing from the ensemble:
 
     #     # Get the symmetries from spglib
     #     super_structure = self.current_dyn.structure.generate_supercell(self.supercell)
-    #     spglib_syms = spglib.get_symmetry(super_structure.get_ase_atoms())
+    #     spglib_syms = spglib.get_symmetry(super_structure.get_spglib_cell())
 
     #     # Convert them into the cellconstructor format
     #     cc_syms = CC.symmetries.GetSymmetriesFromSPGLIB(spglib_syms, False)
@@ -1534,7 +1534,7 @@ Error, the following stress files are missing from the ensemble:
 
         # Get the symmetries from spglib
         super_structure = self.current_dyn.structure.generate_supercell(self.supercell)
-        spglib_syms = spglib.get_symmetry(super_structure.get_ase_atoms())
+        spglib_syms = spglib.get_symmetry(super_structure.get_spglib_cell())
 
         # Convert them into the cellconstructor format
         cc_syms = CC.symmetries.GetSymmetriesFromSPGLIB(spglib_syms, False)
@@ -1733,7 +1733,8 @@ Error, the following stress files are missing from the ensemble:
 
         # Exclude translations
         if not self.ignore_small_w:
-            trans_original = CC.Methods.get_translations(pols_original, super_struct0.get_masses_array())
+            trans_original = super_struct0.get_asr_modes(pols_original)
+            # trans_original = CC.Methods.get_translations(pols_original, super_struct0.get_masses_array())
         else:
             trans_original = np.abs(w_original) < CC.Phonons.__EPSILON_W__
 
@@ -1750,15 +1751,14 @@ Error, the following stress files are missing from the ensemble:
 
 
         if not self.ignore_small_w:
-            trans_mask = CC.Methods.get_translations(pols, super_structure.get_masses_array())
+            trans_mask = super_structure.get_asr_modes(pols)
+            # trans_mask = CC.Methods.get_translations(pols, super_structure.get_masses_array())
         else:
             trans_mask = np.abs(w_new) < CC.Phonons.__EPSILON_W__
 
 
         # Check if the new dynamical matrix satisfies the sum rule
-        violating_sum_rule = (np.sum(trans_mask.astype(int)) != 3) or (np.sum(trans_original.astype(int)) != 3)
-        if self.ignore_small_w:
-            violating_sum_rule = np.sum(trans_mask.astype(int)) != np.sum(trans_original.astype(int))
+        violating_sum_rule = np.sum(trans_mask.astype(int)) != np.sum(trans_original.astype(int))
 
 
         if violating_sum_rule:
@@ -1955,7 +1955,8 @@ DETAILS OF ERROR:
 
         # Exclude translations
         if not self.ignore_small_w:
-            trans_original = CC.Methods.get_translations(pols_original, super_struct0.get_masses_array())
+            trans_original = super_struct0.get_asr_modes(pols_original)
+            # trans_original = CC.Methods.get_translations(pols_original, super_struct0.get_masses_array())
         else:
             trans_original = np.abs(w_original) < CC.Phonons.__EPSILON_W__
 
@@ -1972,15 +1973,15 @@ DETAILS OF ERROR:
 
 
         if not self.ignore_small_w:
-            trans_mask = CC.Methods.get_translations(pols, super_structure.get_masses_array())
+            trans_mask = super_structure.get_asr_modes(pols)
+            # trans_mask = CC.Methods.get_translations(pols, super_structure.get_masses_array())
         else:
             trans_mask = np.abs(w_new) < CC.Phonons.__EPSILON_W__
 
 
         # Check if the new dynamical matrix satisfies the sum rule
-        violating_sum_rule = (np.sum(trans_mask.astype(int)) != 3) or (np.sum(trans_original.astype(int)) != 3)
-        if self.ignore_small_w:
-            violating_sum_rule = np.sum(trans_mask.astype(int)) != np.sum(trans_original.astype(int))
+        # violating_sum_rule = (np.sum(trans_mask.astype(int)) != 3) or (np.sum(trans_original.astype(int)) != 3)
+        violating_sum_rule = np.sum(trans_mask.astype(int)) != np.sum(trans_original.astype(int))
 
 
         if violating_sum_rule:
@@ -1995,7 +1996,7 @@ Error, one dynamical matrix does not satisfy the acoustic sum rule.
 DETAILS OF ERROR:
     Number of translatinal modes in the original dyn = {}
     Number of translational modes in the target dyn = {}
-    (They should be both 3)
+    (They should be both be the same - 3 in bulk)
 """.format(np.sum(trans_original.astype(int)), np.sum(trans_mask.astype(int)))
 
             print(ERR_MSG)
@@ -2718,7 +2719,8 @@ Error while loading the julia module.
             w, pols = self.current_dyn.DiagonalizeSupercell()#supercell_dyn.DyagDinQ(0)
 
         if not self.ignore_small_w:
-            trans = CC.Methods.get_translations(pols, super_struct.get_masses_array())
+            trans = super_struct.get_asr_modes(pols)
+            # trans = CC.Methods.get_translations(pols, super_struct.get_masses_array())
         else:
             trans = np.abs(w) < CC.Phonons.__EPSILON_W__
 
@@ -2958,7 +2960,8 @@ Error while loading the julia module.
         wr, pols = self.current_dyn.DiagonalizeSupercell()
 
         if not self.ignore_small_w:
-            trans = ~ CC.Methods.get_translations(pols, super_structure.get_masses_array())
+            trans = ~ super_structure.get_asr_modes(pols)
+            # trans = ~ CC.Methods.get_translations(pols, super_structure.get_masses_array())
         else:
             trans = np.abs(wr) > CC.Phonons.__EPSILON_W__
 
@@ -3386,7 +3389,8 @@ Error while loading the julia module.
         w_sc, pols_sc = super_dyn.DyagDinQ(0)
 
         # Remove translations
-        no_trans_mask = ~CC.Methods.get_translations(pols_sc, super_dyn.structure.get_masses_array())
+        no_trans_mask = ~super_dyn.structure.get_asr_modes(pols_sc)
+        # no_trans_mask = ~CC.Methods.get_translations(pols_sc, super_dyn.structure.get_masses_array())
         w_sc = w_sc[no_trans_mask]
         pols_sc = pols_sc[:, no_trans_mask]
 
@@ -3651,6 +3655,15 @@ Error while loading the julia module.
         # """
         #         raise NotImplementedError(ERROR_MSG)
 
+        # Check if the ensemble has been initialized
+        if len(self.forces) == 0:
+            n_forces = len(self.forces)
+            raise ValueError(
+                    f"Cannot evaluate free-energy Hessian: 'self.forces' is empty (len={n_forces}). "
+                    "Initialize or load the ensemble and compute energies and forces first."
+                )
+
+
         # Convert anything into the Ha units
         # This is needed for the Fortran subroutines
         self.convert_units(UNITS_HARTREE)
@@ -3681,7 +3694,8 @@ Error while loading the julia module.
 
         # Get the translational modes
         if not self.ignore_small_w:
-            trans = CC.Methods.get_translations(pols, super_structure.get_masses_array())
+            trans = super_structure.get_asr_modes(pols)
+            # trans = CC.Methods.get_translations(pols, super_structure.get_masses_array())
         else:
             trans = np.abs(w) < CC.Phonons.__EPSILON_W__
 
@@ -4216,7 +4230,57 @@ Error while loading the julia module.
             a[:] = np.sqrt((1.0 / np.tanh(0.5 * w * 315774.65221921849 / T)) / (2.0 * w))
         return a
 
+
+
+
+# ------------------------------------------------------------------------------
+def load_ensemble_bin(directory, population, temperature, nqirr=-1):
+    """
+    Load the ensemble from the given directory. This subroutine automatically initializes the ensemble
+    and avoids the hursle of having to define and initialize a dynamical matrix before loading the ensemble.
+
+
+    Parameters
+    ----------
+        - directory : string
+            Path to the directory where the ensemble is located
+        - population : Int
+            The index of the ensemble
+        - temperature : Float
+            The temperature for the ensemble
+        - nqirr : Int
+            The number of irreducible points of the dynamical matrix.
+            If not provided (or negative), it is inferred from the files.
+
+    Returns
+    -------
+        - ensemble : Ensemble()
+            The Ensemble object.
+    """
+
+    # Get the generated dyn
+    generated_name = os.path.join(directory, "dyn_gen_pop%d_" % population)
+
+    # Infer the nqirr if not provided
+    if nqirr < 0:
+        nqirr = len([x for x in os.listdir(directory) if x.startswith("dyn_gen_pop%d_" % population)])
+        if os.path.exists(generated_name + "0"):
+            nqirr -= 1
+
+    # Load the dynamical matrix
+    dyn = CC.Phonons.Phonons(generated_name, nqirr)
+
+    # Check if nqirr was correct
+    assert np.prod(dyn.GetSupercell()) == len(dyn.dynmats), "Error, the value of nqirr = {} is wrong. Check wether you specified the correct value.".format(nqirr)
+
+    ensemble = Ensemble(dyn, temperature)
+    ensemble.load_bin(directory, population)
+
+    return ensemble
+
+
 #-------------------------------------------------------------------------------
+
 def _wrapper_julia_get_upsilon_q(*args, **kwargs):
     """Worker function, just for testing"""
     return julia.Main.get_upsilon_fourier(*args, **kwargs)

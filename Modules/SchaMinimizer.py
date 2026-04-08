@@ -948,7 +948,7 @@ Error, exceeded the maximum number of step with an imaginary frequency ({}).
         print (" use spglib = ", self.use_spglib)
         if self.use_spglib:
             import spglib
-            print (" Symmetry group = {}".format(spglib.get_spacegroup(self.dyn.structure.get_ase_atoms())))
+            print (" Symmetry group = {}".format(spglib.get_spacegroup(self.dyn.structure.get_spglib_cell())))
         print (" Number of symmetries in the unit cell = ", self.N_symmetries)
 
         print ()
@@ -964,11 +964,11 @@ Error, exceeded the maximum number of step with an imaginary frequency ({}).
         print (" supercell size = ", " ".join([str(x) for x in self.ensemble.supercell]))
 
         # Get the current frequencies
-        w, pols = self.dyn.GenerateSupercellDyn(self.ensemble.supercell).DyagDinQ(0)
+        w, pols = self.dyn.DiagonalizeSupercell()#self.dyn.GenerateSupercellDyn(self.ensemble.supercell).DyagDinQ(0)
         w *= __RyToCm__
 
         # Get the starting frequencies
-        w0, p0 = self.ensemble.dyn_0.GenerateSupercellDyn(self.ensemble.supercell).DyagDinQ(0)
+        w0, p0 = self.ensemble.dyn_0.DiagonalizeSupercell()
         w0 *= __RyToCm__
 
         print ()
@@ -1097,7 +1097,7 @@ Maybe data_dir is missing from your input?"""
 
                 import spglib
                 if verbosity:
-                    print("Symmetry group: ", spglib.get_spacegroup(self.dyn.structure.get_ase_atoms()))
+                    print("Symmetry group: ", spglib.get_spacegroup(self.dyn.structure.get_spglib_cell()))
 
                 self.N_symmetries = qe_sym.QE_nsym
 
@@ -1337,7 +1337,7 @@ WARNING, the preconditioning is activated together with a root representation.
                 print ("")
                 print("Number of symmetries before the step: ", self.N_symmetries)
                 if self.use_spglib:
-                    print("Group space: ", spglib.get_spacegroup(self.dyn.structure.get_ase_atoms()))
+                    print("Group space: ", spglib.get_spacegroup(self.dyn.structure.get_spglib_cell()))
                 print ("Harmonic contribution to free energy = %16.8f meV" % (harm_fe * __RyTomev__))
                 print ("Anharmonic contribution to free energy = %16.8f +- %16.8f meV" % (anharm_fe * __RyTomev__,
                                                                                          np.real(err) * __RyTomev__))
@@ -1507,10 +1507,11 @@ WARNING, the preconditioning is activated together with a root representation.
             pols = self.ensemble.current_pols.copy()
 
             #w, pols = super_dyn.DyagDinQ(0)
-            trans = CC.Methods.get_translations(pols, super_struct.get_masses_array())
+            trans = super_struct.get_asr_modes(pols)
+            # trans = CC.Methods.get_translations(pols, super_struct.get_masses_array())
 
             for i in range(len(w)):
-                print ("Mode %5d:   freq %16.8f cm-1  | is translation? " % (i+1, w[i] * __RyToCm__), trans[i])
+                print ("Mode %5d:   freq %16.8f cm-1  | is asr? " % (i+1, w[i] * __RyToCm__), trans[i])
 
             print ()
 
@@ -1538,7 +1539,8 @@ WARNING, the preconditioning is activated together with a root representation.
 
         # Get translations
         if not self.ensemble.ignore_small_w:
-            trans_mask = ~CC.Methods.get_translations(pols, ss.get_masses_array())
+            trans_mask = ~ss.get_asr_modes(pols)
+            # trans_mask = ~CC.Methods.get_translations(pols, ss.get_masses_array())
         else:
             trans_mask = np.abs(w) > CC.Phonons.__EPSILON_W__
 
@@ -1559,7 +1561,8 @@ WARNING, the preconditioning is activated together with a root representation.
             #ss0 = self.ensemble.dyn_0.structure.generate_supercell(self.dyn.GetSupercell())
 
             if not self.ensemble.ignore_small_w:
-                trans_mask = ~CC.Methods.get_translations(pold, ss.get_masses_array())
+                trans_mask = ~ss.get_asr_modes(pold)
+                # trans_mask = ~CC.Methods.get_translations(pold, ss.get_masses_array())
             else:
                 trans_mask = np.abs(wold) > CC.Phonons.__EPSILON_W__
 
@@ -1948,7 +1951,8 @@ def ApplyLambdaTensor(current_dyn, matrix, T = 0):
     w, pols = current_dyn.DyagDinQ(0)
 
     # Get the translations
-    trans = ~CC.Methods.get_translations(pols, current_dyn.structure.get_masses_array())
+    trans = ~current_dyn.structure.get_asr_modes(pols)
+    # trans = ~CC.Methods.get_translations(pols, current_dyn.structure.get_masses_array())
 
     # Restrict only to non translational modes
     w = np.real(w[trans])
@@ -2012,7 +2016,8 @@ def ApplyFCPrecond(current_dyn, matrix, T = 0):
     w, pols = current_dyn.DyagDinQ(0)
 
     # Get the translations
-    trans = ~CC.Methods.get_translations(pols, current_dyn.structure.get_masses_array())
+    trans = ~current_dyn.structure.get_asr_modes(pols)
+    #trans = ~CC.Methods.get_translations(pols, current_dyn.structure.get_masses_array())
 
     # Restrict only to non translational modes
     w = np.real(w[trans])
@@ -2103,7 +2108,8 @@ def GetStructPrecond(current_dyn, ignore_small_w = False, w_pols = None):
 
     # Select translations
     if not ignore_small_w:
-        not_trans = ~CC.Methods.get_translations(pols, mass)
+        not_trans = ~current_dyn.structure.get_asr_modes(pols)
+        # not_trans = ~CC.Methods.get_translations(pols, mass)
     else:
         not_trans = np.abs(w) > CC.Phonons.__EPSILON_W__
 
