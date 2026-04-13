@@ -203,6 +203,7 @@ py.install_sources([
   'Modules/LocalCluster.py',
   'Modules/Minimizer.py',
   'Modules/Optimizer.py',
+  'Modules/MTP.py',
   'Modules/Parallel.py',
   'Modules/Relax.py',
   'Modules/SchaMinimizer.py',
