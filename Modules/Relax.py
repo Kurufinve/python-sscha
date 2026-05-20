@@ -296,7 +296,7 @@ class SSCHA(object):
 
     def relax(self, restart_from_ens = False, get_stress = False,
               ensemble_loc = None, start_pop = None, sobol = False,
-               sobol_scramble = False, sobol_scatter = 0.0):
+               sobol_scramble = False, sobol_scatter = 0.0,**kwargs):
         """
         COSTANT VOLUME RELAX
         ====================
@@ -392,6 +392,19 @@ Error, the specified location to save the ensemble:
 
             self.minim.finalize()
 
+            specorder = kwargs.get('specorder', None)
+            min_distances = kwargs.get('min_distances', None)
+            allowed_bad_fraction = kwargs.get('allowed_bad_fraction', 0.01)
+            minus_offset_stress = kwargs.get('minus_offset_stress', 0)
+
+            self.minim.ensemble.save_averaged_quantities(data_dir = ensemble_loc, 
+                                                         specorder = specorder, 
+                                                         population_id = pop, 
+                                                         min_distances = min_distances, 
+                                                         allowed_bad_fraction = allowed_bad_fraction, 
+                                                         minus_offset_stress = minus_offset_stress,
+                                                         save_stress = get_stress)
+
             # Perform the symmetrization
             print ("Checking the symmetries of the dynamical matrix:")
             qe_sym = CC.symmetries.QE_Symmetry(self.minim.dyn.structure)
@@ -425,7 +438,7 @@ Error, the specified location to save the ensemble:
                  restart_from_ens = False,
                  ensemble_loc = None, start_pop = None, stress_numerical = False,
                  cell_relax_algorithm = "sd", fix_volume = False, sobol = False,
-                  sobol_scramble = False, sobol_scatter = 0.0):
+                  sobol_scramble = False, sobol_scatter = 0.0,**kwargs):
         """
         VARIABLE CELL RELAX
         ====================
@@ -621,6 +634,20 @@ Error, the specified location to save the ensemble:
 
 
             self.minim.finalize()
+
+            specorder = kwargs.get('specorder', None)
+            min_distances = kwargs.get('min_distances', None)
+            allowed_bad_fraction = kwargs.get('allowed_bad_fraction', 0.01)
+            minus_offset_stress = kwargs.get('minus_offset_stress', 0)
+
+
+            self.minim.ensemble.save_averaged_quantities(data_dir = ensemble_loc, 
+                                                         specorder = specorder, 
+                                                         population_id = pop, 
+                                                         min_distances = min_distances, 
+                                                         allowed_bad_fraction = allowed_bad_fraction, 
+                                                         minus_offset_stress = minus_offset_stress,
+                                                         save_stress = True)
 
             # Get the stress tensor [ev/A^3]
             stress_tensor, stress_err = self.minim.get_stress_tensor()

@@ -5,7 +5,8 @@ import warnings
 import numpy as np
 import time
 #from scipy.special import tanh, sinh, cosh
-
+from scipy.spatial.distance import cdist
+import itertools
 
 """
 This is part of the program python-sscha
@@ -35,6 +36,8 @@ import cellconstructor.Settings
 import sscha.Parallel as Parallel
 from sscha.Parallel import pprint as print
 from sscha.Tools import NumpyEncoder
+
+from ase.build.supercells import make_supercell
 
 import json
 
@@ -118,6 +121,11 @@ except:
     __RyToK__ = 157887.32400374097
 
 __GPa__ = 14710.50763554043
+
+__RyToev__ = 13.605698066
+__RyBohr3_to_GPa__ = 14710.513242194795
+__evA3_to_GPa__ = 160.21766208
+__RyBohr3_to_evA3__ = __RyBohr3_to_GPa__ / __evA3_to_GPa__
 
 __DEBUG_RHO__ = False
 
@@ -4231,7 +4239,146 @@ Error while loading the julia module.
         return a
 
 
+    def save_averaged_quantities(self, data_dir, specorder, population_id = 1, min_distances=None, allowed_bad_fraction=0.01, minus_offset_stress = 0.0, save_stress=False):
 
+        bad_fraction = 0.0
+        ensemble_is_good = True
+
+        # Save the weights
+        np.save("%s/ensemble_weights_pop%d.npy" % (data_dir, population_id), self.rho)
+
+        if min_distances != None:
+            configurations = self.structures
+            good_confs = 0
+            bad_confs = 0
+            all_confs = 0
+            for conf in configurations:
+                conf_is_good = are_ion_distances_good(conf, min_distances)
+                if conf_is_good:
+                    good_confs += 1
+                else:
+                    bad_confs += 1
+                all_confs += 1
+
+            bad_fraction = bad_confs / all_confs
+            if bad_fraction > allowed_bad_fraction:
+                ensemble_is_good = False
+            print(f'Fraction of bad structures in the ensemble is {bad_fraction*100} %')
+
+        if ensemble_is_good:
+            # Получаем структурную информацию
+            atoms_unit_cell = self.current_dyn.structure.get_ase_atoms()
+            supercell_translations = self.current_dyn.GetSupercell()
+            nq1 = supercell_translations[0]
+            nq2 = supercell_translations[1]
+            nq3 = supercell_translations[2]
+            atoms = make_supercell(atoms_unit_cell, [[nq1,0,0],[0,nq2,0],[0,0,nq3]])
+            N_atoms = len(atoms)
+
+            print('N_atoms in supercell:')
+            print(N_atoms)
+            cell = atoms.get_cell()
+            coords = atoms.get_positions()
+            volume = atoms.get_volume()
+            
+            # Получаем усредненные величины
+            ensemble_free_energy = self.get_free_energy()
+            ensemble_free_energy *= __RyToev__
+            print('ensemble_free_energy')
+            print(ensemble_free_energy)
+            ensemble_averaged_forces = self.get_average_forces(get_error=False, in_unit_cell=False)
+            ensemble_averaged_forces *= __RyToev__
+            print('ensemble_averaged_forces')
+            print(ensemble_averaged_forces)
+
+            np.save("%s/ensemble_averaged_energy_pop%d.npy" % (data_dir, population_id), ensemble_free_energy)
+            np.save("%s/ensemble_averaged_forces_pop%d.npy" % (data_dir, population_id), ensemble_averaged_forces)
+
+            # Save the structures
+            np.save("%s/ensemble_averaged_xats_pop%d.npy" % (data_dir, population_id), coords)
+
+
+
+            if save_stress and self.has_stress:
+                ensemble_averaged_stresses_3x3, err_stress_3x3 = self.get_stress_tensor(offset_stress=-minus_offset_stress)
+                ensemble_averaged_stresses_3x3 *=  __RyBohr3_to_evA3__
+                print('ensemble_averaged_stresses_3x3')
+                print(ensemble_averaged_stresses_3x3)
+                np.save("%s/ensemble_averaged_stresses_pop%d.npy" % (data_dir, population_id), ensemble_averaged_stresses_3x3)
+            
+            # Создаем mapping для типов атомов
+            typat = atoms.get_chemical_symbols()
+
+            # wirting cfg file only if specorder exist
+            if specorder:
+                mapping = {val: i for i, val in enumerate(specorder)}
+                
+                # Генерируем содержимое CFG файла
+                if save_stress and self.has_stress:
+                    ensemble_averaged_stresses_voigt = stress_tensor_to_voigt(ensemble_averaged_stresses_3x3)
+                    cfg_content = generate_cfg_content(
+                        N_atoms, cell, coords, typat, mapping,
+                        ensemble_free_energy, ensemble_averaged_forces,
+                        ensemble_averaged_stresses_voigt, 
+                        volume, include_stress=save_stress
+                    )
+                else:
+                    cfg_content = generate_cfg_content(
+                        N_atoms, cell, coords, typat, mapping,
+                        ensemble_free_energy, ensemble_averaged_forces,
+                        None, 
+                        volume, include_stress=save_stress            
+                    )    
+                
+                filename_cfg = f'{data_dir}/dyn_gen_pop{population_id}_averaged_ensemble_set.cfg'
+
+                with open(filename_cfg,'w') as f:
+                    f.write(cfg_content)
+
+
+            xyz_content = []
+            stress_key = "stress"
+            forces_key = "forces"
+            energy_key = "energy"
+
+            # Add the number of atoms
+            xyz_content.append("{:d}\n".format(N_atoms))
+
+            # Prepare the enriched line of xyz with the description of the structure
+            info = 'pbc="T T T" ' # Periodic boundary conditions
+            info += 'Lattice="{:20.16f} {:20.16f} {:20.16f} {:20.16f} {:20.16f} {:20.16f} {:20.16f} {:20.16f} {:20.16f}" '.format(*list(cell.ravel()))
+
+            # Add the energy
+            info += '{}={:.16f} '.format(energy_key, ensemble_free_energy)
+
+            # Add the virial stress only if present
+            if save_stress and self.has_stress:
+                stress_data = - ensemble_averaged_stresses_3x3.ravel()
+                info += '{}="{:20.16f} {:20.16f} {:20.16f} {:20.16f} {:20.16f} {:20.16f} {:20.16f} {:20.16f} {:20.16f}" '.format(stress_key, *list(stress_data))
+
+            # Add the secription of the xyz format
+            info += 'Properties=species:S:1:pos:R:3:{}:R:3\n'.format(forces_key)
+
+            xyz_content.append(info)
+
+            # Append the structure and the forces
+            for j in range(N_atoms):
+                line = "{}  ".format(typat[j])
+                line += " {:20.16f} {:20.16f} {:20.16f}    ".format(*list(coords[j, :]))
+                line += " {:20.16f} {:20.16f} {:20.16f}\n".format(*list(ensemble_averaged_forces[j, :]))
+                xyz_content.append(line)
+
+            # Save the work
+            filename_xyz = f'{data_dir}/dyn_gen_pop{population_id}_averaged_ensemble_set.xyz'
+
+            with open(filename_xyz, "w") as fp:
+                fp.writelines(xyz_content)
+
+            
+            print(f"Averaged ensemble quantities are saved")
+        else:
+            print(f"Fraction of bad configurations in ensemble with pop_id={population_id} ({bad_fraction*100} %) is too large!")
+                    
 
 # ------------------------------------------------------------------------------
 def load_ensemble_bin(directory, population, temperature, nqirr=-1):
@@ -4377,3 +4524,189 @@ def _wrapper_julia_vector_vector_fourier(*args, **kwargs):
 
     return julia.Main.multiply_vector_vector_fourier(*args,
             **kwargs)
+
+
+def are_ion_distances_good(structure, min_distances):
+
+    """
+    structure - CellConstructor structure object
+    min_distances - dictionary with minimal interatomic distances between atoms in Angstroms
+    example of min_distances (similar to USPEX): 
+    {'Mg Mg': 1.0, 'Mg Si': 1.0, 'Mg O': 0.8, 'Si Si': 1.0, 'Si O': 0.8, 'O O': 1.0}
+
+    
+    """
+
+    # the case when min_distances are not specified
+    if min_distances == None:
+        return True
+
+    # converting min_distances to blmin dict as in ase.ga.utilities
+    blmin = convert_min_distances_to_bl(structure, min_distances)
+
+    atoms = structure.get_ase_atoms()
+
+    are_ion_distances_bad = atoms_too_close(atoms, blmin)
+
+    if are_ion_distances_bad: 
+        # print('Structure violates min_distance constraints and will not be added!')
+        return False
+
+    return True
+
+def convert_min_distances_to_bl(structure,min_distances):
+
+    """
+    Function for converting USPEX-like min_distances dictionary to ase
+    """
+
+    s = structure.get_ase_atoms()
+
+    symbols_numbers = dict(zip(s.get_chemical_symbols(), s.get_atomic_numbers()))
+
+    # New dictionary to store the transformed data
+    d = {}
+
+    for key, value in min_distances.items():
+        # Split the key into the individual symbols
+        elements = key.split()
+        
+        # Attempt to replace symbols with numbers, creating a tuple as the new key
+        # This approach assumes all elements can be replaced; otherwise, they are ignored
+        try:
+            new_key = tuple(symbols_numbers[elem] for elem in elements if elem in symbols_numbers)
+            # Only add to the new dictionary if the new_key has two elements, matching your requirement
+            if len(new_key) == 2:
+                d[new_key] = value
+        except KeyError:
+            # Handle the case where an element isn't found in symbols_numbers, if necessary
+            pass
+
+    return d
+
+# Function from ase.ga.utilities
+def atoms_too_close(atoms, bl, use_tags=False):
+    """Checks if any atoms in a are too close, as defined by
+    the distances in the bl dictionary.
+
+    use_tags: whether to use the Atoms tags to disable distance
+        checking within a set of atoms with the same tag.
+
+    Note: if certain atoms are constrained and use_tags is True,
+    this method may return unexpected results in case the
+    contraints prevent same-tag atoms to be gathered together in
+    the minimum-image-convention. In such cases, one should
+    (1) release the relevant constraints,
+    (2) apply the gather_atoms_by_tag function, and
+    (3) re-apply the constraints, before using the
+        atoms_too_close function.
+    """
+    a = atoms.copy()
+    if use_tags:
+        gather_atoms_by_tag(a)
+
+    pbc = a.get_pbc()
+    cell = a.get_cell()
+    num = a.get_atomic_numbers()
+    pos = a.get_positions()
+    tags = a.get_tags()
+    unique_types = sorted(list(set(num)))
+
+    neighbours = []
+    for i in range(3):
+        if pbc[i]:
+            neighbours.append([-1, 0, 1])
+        else:
+            neighbours.append([0])
+
+    for nx, ny, nz in itertools.product(*neighbours):
+        displacement = np.dot(cell.T, np.array([nx, ny, nz]).T)
+        pos_new = pos + displacement
+        distances = cdist(pos, pos_new)
+
+        if nx == 0 and ny == 0 and nz == 0:
+            if use_tags and len(a) > 1:
+                x = np.array([tags]).T
+                distances += 1e2 * (cdist(x, x) == 0)
+            else:
+                distances += 1e2 * np.identity(len(a))
+
+        iterator = itertools.combinations_with_replacement(unique_types, 2)
+        for type1, type2 in iterator:
+            x1 = np.where(num == type1)
+            x2 = np.where(num == type2)
+            try:
+                mindist = bl[(type1, type2)]
+            except KeyError:
+                mindist = bl[(type2, type1)]
+            except:
+                mindist = 0.0
+            # if np.min(distances[x1].T[x2]) < bl[(type1, type2)]:
+            if np.min(distances[x1].T[x2]) < mindist:
+                return True
+
+    return False
+
+def generate_cfg_content(N_atoms, cell, coords, typat, mapping, energy, forces, stresses, volume, include_stress=True):
+    """
+    Генерирует содержимое CFG файла для одной популяции
+    """
+    cfg_lines = []
+    cfg_lines.append('')
+    cfg_lines.append('BEGIN_CFG')
+    cfg_lines.append(' Size')
+    cfg_lines.append(f'    {N_atoms}')
+    cfg_lines.append(' Supercell')
+    cfg_lines.append(f'         {cell[0][0]:.6f}      {cell[0][1]:.6f}      {cell[0][2]:.6f}')
+    cfg_lines.append(f'         {cell[1][0]:.6f}      {cell[1][1]:.6f}      {cell[1][2]:.6f}')
+    cfg_lines.append(f'         {cell[2][0]:.6f}      {cell[2][1]:.6f}      {cell[2][2]:.6f}')
+    cfg_lines.append(' AtomData:  id type       cartes_x      cartes_y      cartes_z           fx          fy          fz')
+    
+    for i in range(N_atoms):
+        cfg_lines.append(f'             {i+1:3}    {mapping[typat[i]]}  \
+             {coords[i][0]:.6f}      {coords[i][1]:.6f}      {coords[i][2]:.6f} \
+             {forces[i][0]:.6f}      {forces[i][1]:.6f}      {forces[i][2]:.6f}')
+    
+    cfg_lines.append(' Energy')
+    cfg_lines.append(f'     {energy:.6f}')
+    
+    if include_stress and stresses is not None:
+        pxx = stresses[0] * volume
+        pyy = stresses[1] * volume
+        pzz = stresses[2] * volume
+        pyz = stresses[3] * volume
+        pxz = stresses[4] * volume
+        pxy = stresses[5] * volume
+        
+        cfg_lines.append(' PlusStress:  xx          yy          zz          yz          xz          xy')
+        cfg_lines.append(f'        {pxx:.5f}    {pyy:.5f}    {pzz:.5f}    {pyz:.5f}    {pxz:.5f}    {pxy:.5f}')
+    
+    cfg_lines.append('END_CFG')
+    cfg_lines.append('')
+    
+    return '\n'.join(cfg_lines)
+
+
+def stress_tensor_to_voigt(stress_tensor_3x3):
+    """
+    Converts a 3x3 stress tensor to a 6-component Voigt notation vector.
+
+    Args:
+        stress_tensor_3x3 (np.ndarray): A 3x3 NumPy array representing the stress tensor.
+
+    Returns:
+        np.ndarray: A 1D NumPy array of 6 components in Voigt notation.
+    """
+    if stress_tensor_3x3.shape != (3, 3):
+        raise ValueError("Input stress_tensor_3x3 must be a 3x3 NumPy array.")
+
+    # Extract components according to Voigt notation mapping
+    sigma_1 = stress_tensor_3x3[0, 0]  # sigma_xx
+    sigma_2 = stress_tensor_3x3[1, 1]  # sigma_yy
+    sigma_3 = stress_tensor_3x3[2, 2]  # sigma_zz
+    sigma_4 = stress_tensor_3x3[1, 2]  # sigma_yz (or sigma_zy)
+    sigma_5 = stress_tensor_3x3[0, 2]  # sigma_xz (or sigma_zx)
+    sigma_6 = stress_tensor_3x3[0, 1]  # sigma_xy (or sigma_yx)
+
+    voigt_vector = np.array([sigma_1, sigma_2, sigma_3, sigma_4, sigma_5, sigma_6])
+    return voigt_vector
